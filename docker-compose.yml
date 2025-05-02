@@ -12,11 +12,10 @@ services:
     environment:
       SERVER_MAP: TheIsland_WP # Change Map
       SESSION_NAME: My Awesome Server # Change Server Name
-      AUTO_UPDATE_CRON_EXPRESSION: "0 * * * *" 
     volumes:
-      - ./ark_data:/opt/arkserver
-      - ./ark_backup:/var/backups/asa-server
-      - steam_data_server:/opt/steamcmd
+      - ark_data:/opt/arkserver
+      - ark_backup:/var/backups/asa-server
+      - steam_data:/opt/steamcmd
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}/udp"
       #- "${RCON_PORT}:${RCON_PORT}/tcp"
@@ -27,4 +26,6 @@ services:
   #   volumes:
   #     - ./web:/web
 volumes:
-    steam_data_server:
+    steam_data:
+    ark_data:
+    ark_backup:

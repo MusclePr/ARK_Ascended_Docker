@@ -14,10 +14,10 @@ services:
       SESSION_NAME: My Awesome Server with The Island # Set the Server Name
       SERVER_PORT: 7990
     volumes:
-      - ./ark_data_the-island:/opt/arkserver
-      - ./ark_backup/the-island:/var/backups/asa-server
+      - the-island_data:/opt/arkserver
+      - the-island_backup:/var/backups/asa-server
       - steam_data:/opt/steamcmd
-      - ./ark_cluster:/opt/shared-cluster
+      - cluster:/opt/shared-cluster
     ports:
       - "7790:7990/udp"
       #- "${RCON_PORT}:${RCON_PORT}/tcp"
@@ -34,10 +34,10 @@ services:
       SESSION_NAME: My Awesome Server with Extinction # Set the Server Name
       SERVER_PORT: 7791
     volumes:
-      - ./ark_data_extinction:/opt/arkserver
-      - ./ark_backup/extinction:/var/backups/asa-server
+      - extinction_data:/opt/arkserver
+      - extinction_backup:/var/backups/asa-server
       - steam_data:/opt/steamcmd
-      - ./ark_cluster:/opt/shared-cluster
+      - cluster:/opt/shared-cluster
     ports:
       - "7791:7791/udp"
       #- "${RCON_PORT}:${RCON_PORT}/tcp"
@@ -49,3 +49,8 @@ services:
   #     - ./web:/web
 volumes:
     steam_data:
+    cluster:
+    the-island_data:
+    the-island_backup:
+    extinction_data:
+    extinction_backup:
