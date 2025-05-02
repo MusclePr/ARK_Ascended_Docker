@@ -390,12 +390,25 @@ backup(){
 }
 
 restoreBackup(){
-    backup_count=$(ls /var/backups/asa-server/ | wc -l)
+    backup_path=/var/backups
+    backup_count=$(ls "$backup_path" | wc -l)
     if [[ $backup_count -gt 0 ]]; then
+        LogInfo "Please choose the archive to restore:"
+        archive=$(SelectArchive $backup_path)
+        if [[ "$archive" == "" ]]; then
+            LogError "No Selection was made!"
+            return 1
+        fi
+        stop
         sleep 3
-        # restoring the backup
-        /opt/manager/restore.sh
-        sleep 2
+        tar -xzf $archive -C /opt/arkserver/ShooterGame/
+        res=$?
+        if [[ $res == 1 ]]; then
+            LogError "An Error occured. Restoring failed."
+            return 1
+        fi
+        LogSuccess "Backup restored successfully!"
+        sleep 3
         start
     else
         LogError "You haven't created any backups yet."
