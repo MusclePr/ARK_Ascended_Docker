@@ -15,7 +15,7 @@ This project relies on GloriousEggroll's Proton-GE in order to run the ARK Survi
 ### Usage
 Download the container by cloning the repo and setting permissions:
 ```bash
-$ git clone https://github.com/AziXus/ARK_Ascended_Docker.git
+$ git clone https://github.com/Luatan/ARK_Ascended_Docker.git
 $ cd ARK_Ascended_Docker
 $ sudo chown -R 1000:1000 ./ark_*/
 ```
