@@ -11,7 +11,7 @@ echo "$CLEAN"
 return 0
 }
 # create backup folder if it not already exists
-path="/var/backups/asa-server"
+path="/var/backups"
 tmp_path="/opt/arkserver/tmp/backup"
 
 mkdir -p $path
@@ -20,11 +20,15 @@ mkdir -p $tmp_path
 archive_name="$(sanitize "$SESSION_NAME")_$(date +"%Y-%m-%d_%H-%M")"
 
 # copy live path to another folder so tar doesnt get any write on read fails
-echo "copying save folder"
-cp -r -R /opt/arkserver/ShooterGame/Saved "$tmp_path"
+LogInfo "copying save folder"
+cp -r /opt/arkserver/ShooterGame/Saved "$tmp_path"
+if ! [ -d "$tmp_path" ]; then
+    LogError "Unable to copy save files"
+    exit 1
+fi
 
 # tar.gz from the copy path
-echo "creating archive"
+LogInfo "creating archive"
 tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
 
 rm -R "$tmp_path"

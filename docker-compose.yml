@@ -13,8 +13,8 @@ services:
       SERVER_MAP: TheIsland_WP # Change Map
       SESSION_NAME: My Awesome Server # Change Server Name
     volumes:
-      - ark_data:/opt/arkserver
-      - ark_backup:/var/backups/asa-server
+      - data:/opt/arkserver
+      - backup:/var/backups
       - steam_data:/opt/steamcmd
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}/udp"
@@ -27,5 +27,5 @@ services:
   #     - ./web:/web
 volumes:
     steam_data:
-    ark_data:
-    ark_backup:
+    data:
+    backup:

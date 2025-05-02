@@ -2,7 +2,7 @@
 set -e
 i=1
 echo "Here is a list of all your backup archives: "
-path="/var/backups/asa-server"
+path="/var/backups"
 # list all files with a counter
 for datei in $(ls $path); do
    echo "$i - - - - - File: $datei"

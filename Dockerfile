@@ -90,7 +90,9 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 # Set permissions
 RUN         set -ex; \
             chown -R arkuser:arkuser /opt/arkserver; \
-            chown -R arkuser:arkuser /opt/steamcmd;
+            chown -R arkuser:arkuser /opt/steamcmd; \
+            mkdir -p /var/backups;\
+            chown -R arkuser:arkuser /var/backups;
 
 COPY --chown=arkuser --chmod=755 ./scripts/start.sh /opt/start.sh
 COPY --chown=arkuser --chmod=755 ./scripts/healthcheck.sh /opt/healthcheck.sh
@@ -102,6 +104,7 @@ RUN         ln -s /opt/manager/manager.sh /usr/local/bin/manager; \
 USER        arkuser
 WORKDIR     /opt/arkserver/
 
-HEALTHCHECK CMD manager health || exit 1
+HEALTHCHECK CMD /opt/healthcheck.sh
+#HEALTHCHECK CMD manager health || exit 1
 #on startup enter start.sh script
 ENTRYPOINT ["/tini", "--", "/opt/start.sh"]

@@ -7,5 +7,6 @@ if ! /usr/local/bin/manager health >/dev/null; then
         LogInfo "Starting Server"
         /usr/local/bin/manager start &
     fi
+    exit 1
 fi
-
+exit 0

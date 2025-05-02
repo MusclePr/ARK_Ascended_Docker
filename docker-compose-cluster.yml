@@ -15,7 +15,7 @@ services:
       SERVER_PORT: 7990
     volumes:
       - the-island_data:/opt/arkserver
-      - the-island_backup:/var/backups/asa-server
+      - the-island_backup:/var/backups
       - steam_data:/opt/steamcmd
       - cluster:/opt/shared-cluster
     ports:
@@ -35,7 +35,7 @@ services:
       SERVER_PORT: 7791
     volumes:
       - extinction_data:/opt/arkserver
-      - extinction_backup:/var/backups/asa-server
+      - extinction_backup:/var/backups
       - steam_data:/opt/steamcmd
       - cluster:/opt/shared-cluster
     ports:

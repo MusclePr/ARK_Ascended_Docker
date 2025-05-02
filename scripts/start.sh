@@ -39,7 +39,7 @@ if [ "${AUTO_UPDATE_ENABLED,,}" = true ]; then
     supercronic -quiet -test "$CRONTAB_FILE" || exit
 fi
 if [ -s "$CRONTAB_FILE" ]; then
-    supercronic -passthrough-logs "$CRONTAB_FILE" &
+    supercronic -split-logs  "$CRONTAB_FILE" 1>/dev/null &
     LogInfo "Cronjobs started"
 else
     LogInfo "No Cronjobs found"

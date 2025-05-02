@@ -222,7 +222,7 @@ start() {
 
     # Start server in the background + nohup and save PID
     DiscordMessage "Start" "The Server is starting" "success"
-    nohup /opt/manager/manager_server_start.sh >/dev/null 2>&1 &
+    nohup /opt/manager/server_start.sh >/dev/null 2>&1 &
     ark_pid=$!
     echo "$ark_pid" > "$PID_FILE"
     sleep 3
@@ -379,7 +379,7 @@ backup(){
     # saving before creating the backup
     saveworld
     # Use backup script
-    /opt/manager/manager_backup.sh
+    /opt/manager/backup.sh
 
     res=$?
     if [[ $res == 0 ]]; then
@@ -394,7 +394,7 @@ restoreBackup(){
     if [[ $backup_count -gt 0 ]]; then
         sleep 3
         # restoring the backup
-        /opt/manager/manager_restore_backup.sh
+        /opt/manager/restore.sh
         sleep 2
         start
     else
