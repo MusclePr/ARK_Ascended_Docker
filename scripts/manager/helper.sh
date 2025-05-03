@@ -63,3 +63,13 @@ SelectArchive() {
     fi
     return 0
 }
+
+sanitize() {
+CLEAN=${1//_/}
+CLEAN=${CLEAN// /_}
+CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
+CLEAN=$(echo -n "$CLEAN" | tr '[:upper:]' '[:lower:]')
+echo "$CLEAN"
+return 0
+}
+

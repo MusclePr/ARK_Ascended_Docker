@@ -276,7 +276,7 @@ restart() {
 
 saveworld() {
     if ! get_health >/dev/null ; then
-        LogError "Unable to save... Server not up"
+        LogWarn "Unable to save... Server not up"
         return 1
     fi
 
@@ -366,18 +366,42 @@ update() {
 }
 
 backup(){
-    LogInfo "Creating backup. Backups are saved in your ./ark_backup volume."
-    # saving before creating the backup
-    saveworld
-    # Use backup script
-    /opt/manager/backup.sh
+    path="/var/backups"
+    tmp_path="/opt/arkserver/tmp/backup"
 
-    res=$?
-    if [[ $res == 0 ]]; then
-        LogSuccess "Backup Created" >> $LOG_FILE
-    else
-        LogError "creating backup failed"
+    LogInfo "Creating backup. Backups are saved in your backup volume."
+    saveworld
+
+    mkdir -p $path
+    mkdir -p $tmp_path
+
+    archive_name="$(sanitize "$SESSION_NAME")_$(date +"%Y-%m-%d_%H-%M")"
+
+    # copy live path to another folder so tar doesnt get any write on read fails
+    LogInfo "Copying save folder"
+    cp -r /opt/arkserver/ShooterGame/Saved "$tmp_path"
+    if ! [ -d "$tmp_path" ]; then
+        LogError "Unable to copy save files"
+        return 1
     fi
+
+    LogInfo "Creating archive"
+    tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
+    if [[ $? == 1 ]]; then
+        LogError "Creating backup failed" >> $LOG_FILE
+        return 1
+    fi
+    LogSuccess "Backup created" >> $LOG_FILE
+
+    # Clean up Files
+    rm -R "$tmp_path"
+
+    if [[ "${OLD_BACKUP_DAYS}" =~ ^[0-9]+$ ]]; then
+        LogAction "Removing old Backups"
+        LogInfo "Deleting Backups older than ${OLD_BACKUP_DAYS} days!"
+        find "$path" -mindepth 1 -maxdepth 1 -mtime "+${OLD_BACKUP_DAYS}" -type f -name '*.tar.gz' -print -delete
+    fi
+    return 0
 }
 
 restoreBackup(){
