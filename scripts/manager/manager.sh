@@ -3,36 +3,27 @@ RCON_CMDLINE=( rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} )
 EOS_FILE=/opt/manager/.eos.config
 source "/opt/manager/helper.sh"
 
-get_and_check_pid() {
-    # Get PID
-    ark_pid=$(cat "$PID_FILE" 2>/dev/null)
-    if [[ -z "$ark_pid" ]]; then
-        echo "0"
+get_pid() {
+    pid=$(pgrep GameThread)
+    if [[ -z $pid ]]; then
         return 1
     fi
-
-    # Check process is still alive
-    if ps -p $ark_pid > /dev/null; then
-        echo "$ark_pid"
-        return 0
-    else
-        echo "0"
-        return 1
-    fi
+    echo $pid
+    return 0
 }
 
 get_health() {
-    server_pid=$(pgrep GameThread)
+    server_pid=$(get_pid)
     steam_pid=$(pidof steamcmd)
     if [[ "${steam_pid:-0}" != 0 ]]; then
-        echo "Updating"
+        echo "STARTING"
         return 0
     fi
     if [[ "${server_pid:-0}" != 0 ]]; then
         echo "UP"
         return 0
     else
-        echo "Down"
+        echo "DOWN"
         return 1
     fi
 }
@@ -174,41 +165,36 @@ status() {
         fi
     fi
 
-    # Get server PID
-    ark_pid=$(get_and_check_pid)
-    if [[ "$ark_pid" == 0 ]]; then
-        LogError "Server PID not found (server offline?)"
-        return 1
-    fi    
-    echo -e "Server PID:     ${ark_pid}"
-
+    echo -e "Server PID:     $(get_pid)"
     ark_port=$(ss -tupln | grep "GameThread" | grep -oP '(?<=:)\d+')
     if [[ -z "$ark_port" ]]; then
         echo -e "Server Port:    Not Listening"
-        return 1
+    else
+        echo -e "Server Port:    ${ark_port}"
     fi
-
-    echo -e "Server Port:    ${ark_port}"
-
     # Check initial status with rcon command
-    out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null)
-    res=$?
-    if [[ $res == 0 ]]; then
-        # Once rcon is up, query EOS if requested
-        if [[ "$enable_full_status" == true ]]; then
-            full_status_display
-        else            
-            num_players=0
-            if [[ "$out" != "No Players"* ]]; then
-                num_players=$(echo "$out" | wc -l)
+    if health=$(get_health); then
+        out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null)
+        res=$?
+        if [[ $res == 0 ]]; then
+            # Once rcon is up, query EOS if requested
+            if [[ "$enable_full_status" == true ]]; then
+                full_status_display
+            else            
+                num_players=0
+                if [[ "$out" != "No Players"* ]]; then
+                    num_players=$(echo "$out" | wc -l)
+                fi
+                echo -e "Players connected:        ${num_players} / ${MAX_PLAYERS:-?}"
+                LogSuccess "Server is up"
+                return 0
             fi
-            echo -e "Players:        ${num_players} / ?"
-            LogSuccess "Server is up"
+        else
+            LogInfo "Server is starting"
             return 0
         fi
     else
-        LogError "Server is down"
-        return 0
+        LogWarn "The Server is currently $health"
     fi
 }
 
@@ -223,8 +209,6 @@ start() {
     # Start server in the background + nohup and save PID
     DiscordMessage "Start" "The Server is starting" "success"
     nohup /opt/manager/server_start.sh >/dev/null 2>&1 &
-    ark_pid=$!
-    echo "$ark_pid" > "$PID_FILE"
     sleep 3
 }
 
@@ -246,7 +230,11 @@ stop() {
     force=false
     if [[ $res == 0  && "$out" == "Exiting..." ]]; then
         LogInfo "Waiting ${SERVER_SHUTDOWN_TIMEOUT}s for the server to stop"
-        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$ark_pid -f /dev/null
+        if ! get_pid;then
+            LogError "Server already down. This should not happen!"
+            exit 1
+        fi
+        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$(get_pid) -f /dev/null
         res=$?
 
         # Timeout occurred
@@ -261,17 +249,20 @@ stop() {
     if [[ "$force" == true ]]; then
         DiscordMessage "Stopping" "Forcing the Server to shutdown" "faillure"
         LogWarn "Forcing server shutdown"
-        kill -INT $ark_pid
-
-        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$ark_pid -f /dev/null
+        if get_pid; then
+            kill -INT $(get_pid)
+        else
+            LogError "Tried to kill server, but server is not running!"
+            exit 1
+        fi
+        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$(get_pid) -f /dev/null
         res=$?
         # Timeout occurred
         if [[ "$res" == 124 ]]; then
-            kill -9 $ark_pid
+            kill -9 $(get_pid)
         fi
     fi
 
-    echo "" > $PID_FILE
     DiscordMessage "Stopping" "Server has been stopped" "faillure"
     LogAction "SERVER STOPPED" >> "$LOG_FILE"
 }
