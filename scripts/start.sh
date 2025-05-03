@@ -49,7 +49,6 @@ fi
 mkdir -p "${LOG_FILE%/*}" && echo "" > "${LOG_FILE}"
 
 # Start server through manager
-echo "" > "${PID_FILE}"
 manager start &
 
 # Register SIGTERM handler to stop server gracefully
