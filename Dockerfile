@@ -30,7 +30,6 @@ ARG ASA_APPID=2430930
 
 ENV ASA_APPID=$ASA_APPID \
     LOG_FILE=/opt/arkserver/ShooterGame/Saved/Logs/ShooterGame.log \
-    PID_FILE=/opt/arkserver/.server.pid \
     STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/arkuser/.steam/steam \
     STEAM_COMPAT_DATA_PATH=/home/arkuser/.steam/steam/steamapps/compatdata/${ASA_APPID} \
     SERVER_SHUTDOWN_TIMEOUT=30 \
