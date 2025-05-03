@@ -4,3 +4,4 @@ ark_*/*
 !ark_cluster/.gitkeep
 !ark_backup/.gitkeep
 .env
+docker-compose.y*
