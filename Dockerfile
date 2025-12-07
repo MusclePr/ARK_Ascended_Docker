@@ -21,15 +21,20 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-FROM        debian:bullseye-slim
+FROM        cm2network/steamcmd:root
 
 ARG PGID=1000
 ARG PUID=1000
 ARG TINI_VERSION=v0.19.0
 ARG ASA_APPID=2430930
+ARG PROTON_VERSION=tags/GE-Proton10-29
+ARG TZ=Etc/UTC
 
 ENV ASA_APPID=$ASA_APPID \
-    LOG_FILE=/opt/arkserver/ShooterGame/Saved/Logs/ShooterGame.log \
+    TZ=${TZ} \
+    HOME=/home/arkuser \
+    LOG_DIR=/opt/arkserver/ShooterGame/Saved/Logs \
+    LOG_FILE=ShooterGame.log \
     STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/arkuser/.steam/steam \
     STEAM_COMPAT_DATA_PATH=/home/arkuser/.steam/steam/steamapps/compatdata/${ASA_APPID} \
     SERVER_SHUTDOWN_TIMEOUT=30 \
@@ -45,23 +50,30 @@ ENV ASA_APPID=$ASA_APPID \
     DISCORD_CONNECT_TIMEOUT=30 \
     DISCORD_MAX_TIMEOUT=30 
 
-# Use users group for unraid
-RUN         groupadd -g $PGID arkuser && useradd -d /home/arkuser -u $PUID -g $PGID -G users -m arkuser; \
-            mkdir /opt/arkserver;
+# Rename steam user to arkuser and install dependencies
+RUN         set -ex; \
+            groupmod -g ${PGID} -n arkuser steam; \
+            usermod -u ${PUID} -g ${PGID} -l arkuser -d /home/arkuser -m steam; \
+            chown -R arkuser:arkuser /home/arkuser; \
+            mkdir -p /opt/arkserver; \
+            ln -s /home/arkuser/steamcmd /opt/steamcmd;
 
 RUN         set -ex; \
             dpkg --add-architecture i386; \
-            apt update; \
-            apt install -y --no-install-recommends wget curl jq jo sudo iproute2 procps software-properties-common dbus lib32gcc-s1;
+            apt-get update; \
+            apt-get install -y --no-install-recommends tzdata wget curl jq jo sudo iproute2 procps dbus python3 libfreetype6 libvulkan1 libfontconfig1; \
+            echo "${TZ}" > /etc/timezone; \
+            ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime; \
+            dpkg-reconfigure -f noninteractive tzdata; \
+            apt-get clean; \
+            rm -rf /var/lib/apt/lists/*;
 
-# Download steamcmd
+# Download proton-ge-custom and rcon-cli
 RUN         set -ex; \
-            mkdir -p /opt/steamcmd; \
-            cd /opt/steamcmd; \
-            curl "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar zxvf - ;\
-            curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | cut -d\" -f4 | egrep .tar.gz)"; \
+            cd /tmp/; \
+            curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/${PROTON_VERSION} | jq -r '.assets[].browser_download_url' | egrep .tar.gz)"; \
             tar -xzf GE-Proton*.tar.gz -C /usr/local/bin/ --strip-components=1; \
-            rm GE-Proton*.* \
+            rm GE-Proton*.*; \
             rm -f /etc/machine-id; \
             dbus-uuidgen --ensure=/etc/machine-id; \
             rm /var/lib/dbus/machine-id; \
@@ -89,21 +101,20 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 # Set permissions
 RUN         set -ex; \
             chown -R arkuser:arkuser /opt/arkserver; \
-            chown -R arkuser:arkuser /opt/steamcmd; \
             mkdir -p /var/backups;\
             chown -R arkuser:arkuser /var/backups;
 
 COPY --chown=arkuser --chmod=755 ./scripts/start.sh /opt/start.sh
+COPY --chown=root --chmod=755 ./scripts/init.sh /opt/init.sh
 COPY --chown=arkuser --chmod=755 ./scripts/healthcheck.sh /opt/healthcheck.sh
 COPY --chown=arkuser --chmod=755 ./scripts/manager /opt/manager
 
 RUN         ln -s /opt/manager/manager.sh /usr/local/bin/manager; \
             rm -rf /tmp/*;
 
-USER        arkuser
 WORKDIR     /opt/arkserver/
 
 HEALTHCHECK CMD /opt/healthcheck.sh
 #HEALTHCHECK CMD manager health || exit 1
 #on startup enter start.sh script
-ENTRYPOINT ["/tini", "--", "/opt/start.sh"]
+ENTRYPOINT ["/tini", "--", "/opt/init.sh"]
