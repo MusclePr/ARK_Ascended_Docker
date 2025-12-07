@@ -204,7 +204,7 @@ start() {
         return 0
     fi
     LogInfo "Starting server on port ${SERVER_PORT}"
-    LogAction "STARTING SERVER" >> "$LOG_FILE"
+    LogAction "STARTING SERVER" >> "$LOG_PATH"
 
     # Start server in the background + nohup and save PID
     DiscordMessage "Start" "The Server is starting" "success"
@@ -222,7 +222,7 @@ stop() {
         saveworld
     fi
     DiscordMessage "Stopping" "Server will gracefully shutdown" "in-progress"
-    LogAction "STOPPING SERVER" >> "$LOG_FILE"
+    LogAction "STOPPING SERVER" >> "$LOG_PATH"
 
     # Check number of players
     out=$(${RCON_CMDLINE[@]} DoExit 2>/dev/null)
@@ -264,7 +264,7 @@ stop() {
     fi
 
     DiscordMessage "Stopping" "Server has been stopped" "faillure"
-    LogAction "SERVER STOPPED" >> "$LOG_FILE"
+    LogAction "SERVER STOPPED" >> "$LOG_PATH"
 }
 
 restart() {
@@ -297,9 +297,43 @@ saveworld() {
 # Returns 0 if Update Required
 # Returns 1 if Update NOT Required
 # Returns 2 if Check Failed
+check_maintenance() {
+    REQUEST_FILE="/opt/arkserver/.cluster_update.request"
+    LOCK_FILE="/opt/arkserver/.cluster_maintenance.lock"
+    WAITING_FILE="/opt/arkserver/.cluster_waiting_${SERVER_PORT}"
+    RESUME_FLAG="/opt/arkserver/.cluster_resume_${SERVER_PORT}.flag"
+
+    local rcon_listening=false
+    if ss -ltn 2>/dev/null | grep -qE "[:\[]${RCON_PORT}\b"; then
+        rcon_listening=true
+    fi
+
+    if [[ -f "$LOCK_FILE" || -f "$REQUEST_FILE" ]]; then
+        touch "$WAITING_FILE"
+        if get_health >/dev/null; then
+            if [[ "$rcon_listening" == true ]]; then
+                LogWarn "Cluster maintenance detected. Stopping server..."
+                touch "$RESUME_FLAG"
+                stop --saveworld
+            else
+                LogInfo "Cluster maintenance detected, but RCON is not listening yet. Skip stop --saveworld."
+            fi
+        fi
+    else
+        rm -f "$WAITING_FILE" 2>/dev/null || true
+        if [[ -f "$RESUME_FLAG" ]]; then
+            LogInfo "Maintenance finished. Resuming server..."
+            rm -f "$RESUME_FLAG"
+            start
+        fi
+    fi
+}
+
 update_required() {
   LogInfo "Checking for new Server updates"
   local CURRENT_MANIFEST LATEST_MANIFEST temp_file http_code updateAvailable
+    local manifest_file
+    manifest_file="/opt/arkserver/steamapps/appmanifest_${ASA_APPID}.acf"
   #check steam for latest version
   temp_file=$(mktemp)
   http_code=$(curl "https://api.steamcmd.net/v1/info/$ASA_APPID" --output "$temp_file" --silent --location --write-out "%{http_code}")
@@ -320,8 +354,18 @@ update_required() {
       return 2
   fi
 
+  # If server is not installed yet, update is required.
+  if [[ ! -f "$manifest_file" ]]; then
+      LogWarn "Local manifest not found (${manifest_file}). Treating update as required (fresh install)."
+      return 0
+  fi
+
   # Parse current manifest from steam files
-  CURRENT_MANIFEST=$(awk '/manifest/{count++} count==2 {print $2; exit}' /opt/arkserver/steamapps/appmanifest_$ASA_APPID.acf | tr -d '"')
+  CURRENT_MANIFEST=$(awk '/manifest/{count++} count==2 {print $2; exit}' "$manifest_file" 2>/dev/null | tr -d '"')
+  if [[ -z "$CURRENT_MANIFEST" ]]; then
+      LogWarn "Unable to read current manifest from ${manifest_file}. Treating update as required."
+      return 0
+  fi
 
   # Log any updates available
   local updateAvailable=false
@@ -335,33 +379,140 @@ update_required() {
     return 0
   fi
 
-  if [ "$updateAvailable" == false ]; then
+    if [ "$updateAvailable" == true ]; then
+        return 0
+    fi
+
     return 1
-  fi
 }
 
 update() {
-    if ! update_required; then
+    local skip_warn=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-warn)
+                skip_warn=true
+                ;;
+        esac
+        shift
+    done
+
+    local ALLOWED_FILE="/opt/arkserver/.cluster_update.allowed"
+
+    # Always revoke start permission at the beginning of an update cycle.
+    # This prevents slaves from starting while we are checking/updating shared volumes.
+    rm -f "$ALLOWED_FILE" 2>/dev/null || true
+
+    update_required
+    local update_rc=$?
+    if [[ "$update_rc" == 1 ]]; then
         LogSuccess "The server is up to date!"
+        touch "$ALLOWED_FILE" 2>/dev/null || true
         return 0
     fi
-    if [[ "${AUTO_UPDATE_WARN_MINUTES}" =~ ^[0-9]+$ ]]; then
+    if [[ "$update_rc" == 2 ]]; then
+        LogWarn "Unable to check for updates. Proceeding without updating."
+        touch "$ALLOWED_FILE" 2>/dev/null || true
+        return 0
+    fi
+    if [[ "$skip_warn" == true ]]; then
+        LogInfo "Skipping update warning delay (--no-warn)"
+    elif [[ "${UPDATE_WARN_MINUTES}" =~ ^[0-9]+$ ]]; then
         custom_rcon "broadcast The Server will update in ${UPDATE_WARN_MINUTES} minutes"
         DiscordMessage "Update" "Server will update in ${UPDATE_WARN_MINUTES} minutes"
         sleep $((UPDATE_WARN_MINUTES * 60))
     fi
 
+    REQUEST_FILE="/opt/arkserver/.cluster_update.request"
+    LOCK_FILE="/opt/arkserver/.cluster_maintenance.lock"
+    UPDATING_FLAG="/opt/arkserver/.cluster_updating"
+
+    UPDATE_KEEP_LOCK=false
+
+    local request_started_epoch
+    request_started_epoch=$(date +%s)
+    LogInfo "Requesting Cluster Maintenance..."
+    touch "$REQUEST_FILE"
+
+    LogInfo "Initiating Cluster Maintenance..."
+    touch "$LOCK_FILE"
+
+    wait_for_slave_acks "$request_started_epoch"
+
+    trap 'if [[ "${UPDATE_KEEP_LOCK:-}" == "true" ]]; then rm -f "$UPDATING_FLAG"; else rm -f "$UPDATING_FLAG"; rm -f "$LOCK_FILE"; rm -f "$REQUEST_FILE"; fi' EXIT
+
     DiscordMessage "Update" "Updating Server now" "warn"
     LogAction "UPDATING SERVER"
     stop --saveworld
+
+    touch "$UPDATING_FLAG"
     rm "/opt/arkserver/steamapps/appmanifest_$ASA_APPID.acf"
-    /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update ${ASA_APPID} +quit # Remove unnecessary files (saves 6.4GB.., that will be re-downloaded next update)
+    local steamcmd_rc=0
+    local steamcmd_log
+    steamcmd_log=$(mktemp)
+    local warmup_log
+    warmup_log=$(mktemp)
+    local max_retries
+    max_retries=${STEAMCMD_RETRIES:-3}
+    local attempt=1
+
+    LogInfo "Warming up SteamCMD session (login + quit)"
+    /opt/steamcmd/steamcmd.sh +login anonymous +quit 2>&1 | tee "$warmup_log" || LogWarn "SteamCMD warm-up failed; proceeding with update attempts."
+    rm -f "$warmup_log" 2>/dev/null || true
+
+    while (( attempt <= max_retries )); do
+        LogInfo "Running SteamCMD update (attempt ${attempt}/${max_retries})"
+
+        set -o pipefail
+        /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update ${ASA_APPID} validate +quit 2>&1 | tee "$steamcmd_log"
+        steamcmd_rc=${PIPESTATUS[0]}
+        set +o pipefail
+
+        # SteamCMD sometimes prints errors even if exit code is ambiguous; treat these as failures.
+        if [[ $steamcmd_rc -eq 0 ]] && ! grep -qE '^(ERROR!|Failed to install app)' "$steamcmd_log"; then
+            break
+        fi
+
+        LogWarn "SteamCMD update failed (exit code: ${steamcmd_rc})."
+
+        if (( attempt < max_retries )); then
+            local sleep_seconds
+            case "$attempt" in
+                1) sleep_seconds=10 ;;
+                2) sleep_seconds=30 ;;
+                *) sleep_seconds=60 ;;
+            esac
+            LogInfo "Retrying in ${sleep_seconds}s..."
+            sleep "$sleep_seconds"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    rm -f "$steamcmd_log" 2>/dev/null || true
+
+    if [[ $steamcmd_rc -ne 0 ]]; then
+        UPDATE_KEEP_LOCK=true
+        rm -f "$UPDATING_FLAG" 2>/dev/null || true
+        LogError "Update failed after ${max_retries} attempts (last steamcmd exit code: ${steamcmd_rc}). Keeping cluster maintenance lock; server will remain stopped."
+        DiscordMessage "Update" "Update failed after ${max_retries} attempts (steamcmd exit code: ${steamcmd_rc}). Server will remain stopped." "failure"
+        return $steamcmd_rc
+    fi
+
+    # Remove unnecessary files (saves 6.4GB.., that will be re-downloaded next update)
     if [[ -n "${REDUCE_IMAGE_SIZE}" ]]; then 
         rm -rf /opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb
         rm -rf /opt/arkserver/ShooterGame/Content/Movies/
     fi
 
+    rm -f "$UPDATING_FLAG"
+    rm -f "$LOCK_FILE"
+    rm -f "$REQUEST_FILE"
+
+    trap - EXIT
+
     LogSuccess "Update completed"
+    touch "$ALLOWED_FILE" 2>/dev/null || true
     start
 }
 
@@ -388,10 +539,10 @@ backup(){
     LogInfo "Creating archive"
     tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
     if [[ $? == 1 ]]; then
-        LogError "Creating backup failed" >> $LOG_FILE
+        LogError "Creating backup failed" >> $LOG_PATH
         return 1
     fi
-    LogSuccess "Backup created" >> $LOG_FILE
+    LogSuccess "Backup created" >> $LOG_PATH
 
     # Clean up Files
     rm -R "$tmp_path"
@@ -458,7 +609,10 @@ main() {
             get_health
             ;;
         "update") 
-            update
+            update "${@:2}"
+            ;;
+        "check_maintenance")
+            check_maintenance
             ;;
         "backup")
             backup
@@ -475,7 +629,9 @@ main() {
 
 # Check if at least one argument is provided
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <action> [--saveworld]"
+    echo "Usage: $0 <action> [options]"
+    echo "  update options: --no-warn"
+    echo "  stop/restart options: --saveworld"
     exit 1
 fi
 

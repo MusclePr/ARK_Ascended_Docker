@@ -12,6 +12,7 @@ services:
     environment:
       SERVER_MAP: TheIsland_WP # Change Map
       SESSION_NAME: My Awesome Server # Change Server Name
+      AUTO_UPDATE_ENABLED: "true"
     volumes:
       - data:/opt/arkserver
       - backup:/var/backups

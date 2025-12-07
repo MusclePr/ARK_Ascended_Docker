@@ -13,6 +13,7 @@ services:
       SERVER_MAP: TheIsland_WP
       SESSION_NAME: My Awesome Server with The Island # Set the Server Name
       SERVER_PORT: 7990
+      AUTO_UPDATE_ENABLED: "true"
     volumes:
       - the-island_data:/opt/arkserver
       - the-island_backup:/var/backups
@@ -33,6 +34,7 @@ services:
       SERVER_MAP: Extinction_WP
       SESSION_NAME: My Awesome Server with Extinction # Set the Server Name
       SERVER_PORT: 7791
+      AUTO_UPDATE_ENABLED: "true"
     volumes:
       - extinction_data:/opt/arkserver
       - extinction_backup:/var/backups

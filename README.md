@@ -94,6 +94,27 @@ If you want to run a cluster with two or more containers running at the same tim
 - Be sure that you have at least about **28-32GB** of memory available, especially if you use any mods
 - Either replace docker-compose.yml with the file docker-compose-cluster.yml and start the cluster with ```docker compose up``` or use ```docker compose -f docker-compose-cluster.yml up```
 
+#### Cluster update master / slave
+- Only **one** container must be allowed to update the shared server/mod volume.
+- The container with `AUTO_UPDATE_ENABLED=true` acts as the update **master** (runs `manager update` on startup and via cron).
+- Containers with `AUTO_UPDATE_ENABLED=false` act as **slaves** and will wait for the master to finish the update-check before starting (SIGINT/SIGTERM exits the wait).
+- If multiple masters are started, the later one exits after detecting the shared lock at `/opt/arkserver/.cluster_master.lock`.
+
+#### Manual unlock (if the lock/flags remain after kill -9)
+1) Stop all containers (e.g. `docker compose down`)
+2) Remove the lock/flags in the shared volume:
+
+```bash
+docker compose exec -T asa_main bash -lc '\
+  rm -rf /opt/arkserver/.cluster_master.lock; \
+  rm -f  /opt/arkserver/.cluster_update.allowed \
+    /opt/arkserver/.cluster_maintenance.lock \
+    /opt/arkserver/.cluster_update.request \
+    /opt/arkserver/.updating; \
+  rm -f  /opt/arkserver/.cluster_waiting_* \
+    /opt/arkserver/.cluster_resume_*.flag'
+```
+
 ### Manager commands
 The manager script supports several commands that we highlight below. 
 

@@ -11,6 +11,8 @@ export GreenBoldText='\033[1;32m'       # Green
 export YellowBoldText='\033[1;33m'      # Yellow
 export CyanBoldText='\033[1;36m'        # Cyan
 
+export LOG_PATH="${LOG_DIR}/${LOG_FILE}"
+
 LogInfo() {
     Log "$1" "$WhiteText"
 }
@@ -72,4 +74,64 @@ CLEAN=$(echo -n "$CLEAN" | tr '[:upper:]' '[:lower:]')
 echo "$CLEAN"
 return 0
 }
+
+wait_for_slave_acks() {
+    local start_epoch="$1"
+
+    if [[ -z "${SLAVE_PORTS:-}" ]]; then
+        LogInfo "SLAVE_PORTS is not set. Skipping ACK wait."
+        return 0
+    fi
+
+    local -a ports
+    IFS=',' read -r -a ports <<< "${SLAVE_PORTS}" || true
+
+    local -a targets
+    local p
+    for p in "${ports[@]}"; do
+        p="${p//[[:space:]]/}"
+        [[ -z "$p" ]] && continue
+        [[ "$p" == "${SERVER_PORT}" ]] && continue
+        targets+=("$p")
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        LogInfo "SLAVE_PORTS is empty after filtering. Skipping ACK wait."
+        return 0
+    fi
+
+    LogInfo "Waiting up to 70s for slave servers to ACK stop: ${targets[*]}"
+
+    local all_ack=false
+    local -a missing
+    while true; do
+        local now_epoch
+        now_epoch=$(date +%s)
+
+        if (( now_epoch - start_epoch >= 70 )); then
+            break
+        fi
+
+        all_ack=true
+        missing=()
+
+        for p in "${targets[@]}"; do
+            if [[ ! -f "/opt/arkserver/.cluster_waiting_${p}" ]]; then
+                all_ack=false
+                missing+=("$p")
+            fi
+        done
+
+        if [[ "$all_ack" == true ]]; then
+            LogInfo "All slave servers ACKed."
+            return 0
+        fi
+
+        sleep 2
+    done
+
+    LogWarn "Timed out waiting for ACKs. Proceeding without: ${missing[*]:-unknown}"
+    return 0
+}
+
 

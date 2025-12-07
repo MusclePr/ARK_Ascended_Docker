@@ -10,6 +10,7 @@ DISCORD_YELLOW=15258703
 DISCORD_ORANGE=14177041
 DISCORD_RED=14614528
 DISCORD_GREEN=52224
+DISCORD_CYAN=3447003
 DISCORD_FLAGS=0
 
 # Parse arguments
@@ -39,7 +40,7 @@ fi
 if [ -n "${LEVEL}" ]; then
     case $LEVEL in
         info )
-            COLOR=$DISCORD_BLUE
+            COLOR=$DISCORD_CYAN
             ;;
         in-progress )
             COLOR=$DISCORD_YELLOW
@@ -47,10 +48,10 @@ if [ -n "${LEVEL}" ]; then
         warn )
             COLOR=$DISCORD_ORANGE
             ;;
-        failure )
+        failure|left )
             COLOR=$DISCORD_RED
             ;;
-        success )
+        success|joined )
             COLOR=$DISCORD_GREEN
             ;;
         * )
