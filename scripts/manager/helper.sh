@@ -11,6 +11,8 @@ export GreenBoldText='\033[1;32m'       # Green
 export YellowBoldText='\033[1;33m'      # Yellow
 export CyanBoldText='\033[1;36m'        # Cyan
 
+export LOG_PATH="${LOG_DIR}/${LOG_FILE}"
+
 LogInfo() {
     Log "$1" "$WhiteText"
 }
