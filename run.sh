@@ -1,0 +1,19 @@
+#!/bin/bash
+
+set -e
+
+if [ ! -f .env ]; then cp .env.sample .env; fi
+
+case "$1" in
+    down)
+        docker compose down
+        exit 0
+        ;;
+    build)
+        docker compose build --no-cache
+        exit 0
+        ;;
+esac
+trap 'docker compose stop; exit 1' INT
+docker compose down
+docker compose up --build -d && docker compose logs -f

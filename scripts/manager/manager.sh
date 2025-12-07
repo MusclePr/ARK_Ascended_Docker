@@ -204,7 +204,7 @@ start() {
         return 0
     fi
     LogInfo "Starting server on port ${SERVER_PORT}"
-    LogAction "STARTING SERVER" >> "$LOG_FILE"
+    LogAction "STARTING SERVER" >> "$LOG_PATH"
 
     # Start server in the background + nohup and save PID
     DiscordMessage "Start" "The Server is starting" "success"
@@ -222,7 +222,7 @@ stop() {
         saveworld
     fi
     DiscordMessage "Stopping" "Server will gracefully shutdown" "in-progress"
-    LogAction "STOPPING SERVER" >> "$LOG_FILE"
+    LogAction "STOPPING SERVER" >> "$LOG_PATH"
 
     # Check number of players
     out=$(${RCON_CMDLINE[@]} DoExit 2>/dev/null)
@@ -264,7 +264,7 @@ stop() {
     fi
 
     DiscordMessage "Stopping" "Server has been stopped" "faillure"
-    LogAction "SERVER STOPPED" >> "$LOG_FILE"
+    LogAction "SERVER STOPPED" >> "$LOG_PATH"
 }
 
 restart() {
@@ -355,7 +355,7 @@ update() {
     LogAction "UPDATING SERVER"
     stop --saveworld
     rm "/opt/arkserver/steamapps/appmanifest_$ASA_APPID.acf"
-    /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update ${ASA_APPID} +quit # Remove unnecessary files (saves 6.4GB.., that will be re-downloaded next update)
+    /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update ${ASA_APPID} validate +quit # Remove unnecessary files (saves 6.4GB.., that will be re-downloaded next update)
     if [[ -n "${REDUCE_IMAGE_SIZE}" ]]; then 
         rm -rf /opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb
         rm -rf /opt/arkserver/ShooterGame/Content/Movies/
@@ -388,10 +388,10 @@ backup(){
     LogInfo "Creating archive"
     tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
     if [[ $? == 1 ]]; then
-        LogError "Creating backup failed" >> $LOG_FILE
+        LogError "Creating backup failed" >> $LOG_PATH
         return 1
     fi
-    LogSuccess "Backup created" >> $LOG_FILE
+    LogSuccess "Backup created" >> $LOG_PATH
 
     # Clean up Files
     rm -R "$tmp_path"
