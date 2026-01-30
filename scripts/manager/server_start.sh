@@ -22,6 +22,11 @@ if [ -n "${MULTIHOME}" ]; then
     cmd="${cmd}?MultiHome=${MULTIHOME}"
 fi
 
+if [ -n "${DYNAMIC_CONFIG_URL}" ]; then
+    cmd="${cmd}?CustomDynamicConfigUrl=\"${DYNAMIC_CONFIG_URL}\""
+    ark_flags="${ark_flags} -UseDynamicConfig"
+fi
+
 cmd="${cmd}${ARK_EXTRA_OPTS}"
 
 # Server dash options

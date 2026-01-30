@@ -2,7 +2,7 @@
 
 set -e
 
-if [ ! -f .env ]; then cp .env.sample .env; fi
+if [ ! -f .env ]; then cp default.env .env; fi
 
 case "$1" in
     down)
@@ -20,7 +20,10 @@ case "$1" in
         docker compose up -d
         exec docker compose logs -f
         ;;
+    push)
+        docker push ghcr.io/musclepr/ark_ascended_docker:latest
+        ;;
     *)
-        echo "Usage: $(basename $0) {up|down|build}"
+        echo "Usage: $(basename $0) {up|down|build|push}"
         exit 1
 esac
