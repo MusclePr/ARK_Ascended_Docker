@@ -3,8 +3,8 @@ set -e
 
 # Ensure permissions
 mkdir -p /opt/arkserver/.signals
-chown -R arkuser:arkuser /opt/arkserver
-chown -R arkuser:arkuser /var/backups 2>/dev/null || true
+chown arkuser:arkuser /opt/arkserver
+chown arkuser:arkuser /var/backups 2>/dev/null || true
 
 #export HOME=/home/arkuser
 

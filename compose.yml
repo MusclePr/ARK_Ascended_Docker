@@ -6,23 +6,23 @@ services:
     build:
       context: .
       args:
-        TZ: ${TZ:-Etc/UTC}
+        - "TZ=${TZ:-Etc/UTC}"
     env_file:
       - default.env
       - .env
     environment:
-      SERVER_MAP: TheIsland_WP
-      SESSION_NAME: "${DOMAIN:-TEST} - The Island"
-      SERVER_PORT: 7790
-      QUERY_PORT: 27030
-      SLAVE_PORTS: "7791"
-      AUTO_BACKUP_ENABLED: "true"
-      AUTO_BACKUP_CRON_EXPRESSION: "0 3 * * *"
-      AUTO_UPDATE_ENABLED: "true"
-      AUTO_UPDATE_CRON_EXPRESSION: "0 4 * * 0"
+      - "SERVER_MAP=TheIsland_WP"
+      - "SESSION_NAME=${DOMAIN:-TEST} - The Island"
+      - "SERVER_PORT=7790"
+      - "QUERY_PORT=27030"
+      - "SLAVE_PORTS=7791"
+      - "AUTO_BACKUP_ENABLED=true"
+      - "AUTO_BACKUP_CRON_EXPRESSION=0 3 * * *"
+      - "AUTO_UPDATE_ENABLED=true"
+      - "AUTO_UPDATE_CRON_EXPRESSION=0 4 * * 0"
     volumes:
-      - ./ark_server:/opt/arkserver
-      - ./ark_backup:/var/backups
+      - "./ark_server:/opt/arkserver"
+      - "./ark_backup:/var/backups"
     ports:
       - "7790:7790/udp"
       - "27030:27030/udp"
@@ -36,22 +36,23 @@ services:
       - default.env
       - .env
     environment:
-      SERVER_MAP: Extinction_WP
-      SESSION_NAME: "${DOMAIN:-TEST} - Extinction"
-      SERVER_PORT: 7791
-      QUERY_PORT: 27031
-      LOG_FILE: "ShooterGame_sub1.log"
+      - "SERVER_MAP=Extinction_WP"
+      - "SESSION_NAME=${DOMAIN:-TEST} - Extinction"
+      - "SERVER_PORT=7791"
+      - "QUERY_PORT=27031"
+      - "LOG_FILE=ShooterGame_sub1.log"
     volumes:
-      - ./ark_server:/opt/arkserver
-      - ./ark_backup:/var/backups:ro # restore only
+      - "./ark_server:/opt/arkserver"
+      - "./ark_backup:/var/backups:ro" # restore only
     ports:
       - "7791:7791/udp"
       - "27031:27031/udp"
     stop_grace_period: 120s
 
-#  asa_config: # Uncomment Service if you want to use Dynamicconfig
-#    container_name: asa_config
-#    image: python:3.9
-#    entrypoint: /bin/sh -c "chown -R 1000:1000 /web && python3 -m http.server --directory /web 80"
-#    volumes:
-#      - ./web:/web
+  asa_config:
+    image: busybox
+    container_name: asa_config
+    init: true
+    command: httpd -vfh /web
+    volumes:
+      - ./web:/web:ro
