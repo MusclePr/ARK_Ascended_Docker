@@ -159,7 +159,8 @@ MONITOR_PID=$!
 
 # Function to process log lines for Discord notifications
 process_log_line() {
-    local line=$(echo -n "$1" | tr -d '\r\n')
+    local line
+    line=$(echo -n "$1" | tr -d '\r\n')
     local -r log_head_regex='^\[[0-9]{4}\.[0-9]{2}\.[0-9]{2}\-[0-9]{2}\.[0-9]{2}\.[0-9]{2}:[0-9]{3}\]\[[0-9 ]{3}\](.+)'
     if [[ "$line" =~ $log_head_regex ]]; then
         line="${BASH_REMATCH[1]}"
@@ -170,30 +171,48 @@ process_log_line() {
             local -r left_regex='(.+) \[UniqueNetId:([a-zA-Z0-9]+) Platform:([a-zA-Z0-9_]+)\] left this ARK!$'
             local -r cheat_regex='AdminCmd: (.+) \(PlayerName: (.+), ARKID: ([0-9]+), SteamID: ([a-zA-Z0-9]+)\)$'
             local -r message_regex='(.+) \((.+)\): (.+)$'
+            local -r server_regex='^SERVER: (.+)$'
 
             if [[ "$line" =~ $join_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
                 local id="${BASH_REMATCH[2]}"
                 local platform="${BASH_REMATCH[3]}"
-                DiscordMessage "${player}が参加しました。" "EOSID: \`${id}\` / プラットフォーム：\`${platform}\`" "joined"
+                local platform_msg=""
+                if [ "$platform" != "None" ]; then
+                    platform_msg=" / Platform: \`${platform}\`"
+                fi
+                local player_msg
+                DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s joined"}"
+                player_msg=$(printf "$DISCORD_MSG_JOINED" "$player")
+                DiscordMessage "${player_msg}" "EOSID: \`${id}\`${platform_msg}" "joined"
             elif [[ "$line" =~ $left_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
                 local id="${BASH_REMATCH[2]}"
                 local platform="${BASH_REMATCH[3]}"
-                DiscordMessage "${player}が退出しました。" "EOSID: \`${id}\` / プラットフォーム：\`${platform}\`" "left"
+                local platform_msg=""
+                if [ "$platform" != "None" ]; then
+                    platform_msg=" / Platform: \`${platform}\`"
+                fi
+                local player_msg
+                DISCORD_MSG_LEFT="${DISCORD_MSG_LEFT:-"%s left"}"
+                player_msg=$(printf "$DISCORD_MSG_LEFT" "$player")
+                DiscordMessage "${player_msg}" "EOSID: \`${id}\`${platform_msg}" "left"
             elif [[ "$line" =~ $cheat_regex ]]; then
                 local command="${BASH_REMATCH[1]}"
                 local player="${BASH_REMATCH[2]}"
                 local arkid="${BASH_REMATCH[3]}"
                 local steamid="${BASH_REMATCH[4]}"
                 if [ "${DISCORD_NOTIFY_CHEAT,,}" = "true" ]; then
-                    DiscordMessage "${player}のチートコマンド" "ARKID: \`${arkid}\` / SteamID: \`${steamid}\` / Command: \`${command:0:4}...\`" "warn"
+                    DiscordMessage "${player}" "ARKID: \`${arkid}\` / SteamID: \`${steamid}\` / Command: \`${command:0:4}...\`" "warn"
                 fi
             elif [[ "$line" =~ $message_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
                 local id="${BASH_REMATCH[2]}"
                 local message="${BASH_REMATCH[3]}"
                 DiscordMessage "${player} (${id})" "${message}"
+            elif [[ "$line" =~ $server_regex ]]; then
+                local message="${BASH_REMATCH[1]}"
+                DiscordMessage "SERVER" "${message}" "in-progress"
             fi
         fi
     fi

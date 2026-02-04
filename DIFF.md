@@ -105,9 +105,9 @@ This fork addresses running multiple maps with a single program while solving th
     - `ARK_EXTRA_OPTS`
     - `ARK_EXTRA_DASH_OPTS`
     - `MSG_MAINTENANCE_COUNTDOWN` e.g. "Server will shut down for maintenance. Please log out safely. %d seconds left."
-    - `MSG_MAINTENANCE_COUNTDOWN_SOON` e.g. "%d seconds remaining"
-
-- **Timezone (TZ) support**: Container time can be set via the `TZ` environment variable.
+    - `MSG_MAINTENANCE_COUNTDOWN_SOON` e.g. "%d"
+    - `DISCORD_MSG_JOINED` e.g. "%s joined"
+    - `DISCORD_MSG_LEFT` e.g. "%s left"
 
 - **Master/Slave support**:
   - Master coordinates safe shutdowns and restores and instructs slaves to save world and sync during updates/backups. The `asa0` container acts as master and can be given `SLAVE_PORTS` to list slave `SERVER_PORT` values.

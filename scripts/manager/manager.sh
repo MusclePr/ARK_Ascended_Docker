@@ -3,8 +3,8 @@ RCON_CMDLINE=( rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} )
 EOS_FILE=/opt/manager/.eos.config
 source "/opt/manager/helper.sh"
 
-MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-サーバーメンテナンスのため緊急停止します。安全な場所でログアウトしてください。あと%d秒。}"
-MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d秒}"
+MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
+MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
 
 get_pid() {
     pid=$(pgrep GameThread)
@@ -238,7 +238,7 @@ rcon_wait_ready() {
 }
 
 start() {
-    if get_health >/dev/null ; then
+    if get_health >/dev/null || [[ -f "${STATUS_FILE}" && "$(cat ${STATUS_FILE})" =~ STARTING|RUNNING ]]; then
         LogInfo "Server is already running."
         if [[ -n "${SLAVE_PORTS}" ]]; then
             touch "$ALLOWED_FILE" 2>/dev/null || true
@@ -300,7 +300,7 @@ stop() {
                 else
                     msg=$(printf "$MSG_MAINTENANCE_COUNTDOWN_SOON" "$t")
                 fi
-                custom_rcon "broadcast $msg"
+                custom_rcon "serverchat $msg"
             done
             # Final wait for 1 second after "1" broadcast
             sleep 1
@@ -337,7 +337,7 @@ stop() {
     fi
 
     if [[ "$force" == true ]]; then
-        DiscordMessage "Stopping" "Forcing the Server to shutdown" "faillure"
+        DiscordMessage "Stopping" "Forcing the Server to shutdown" "failure"
         LogWarn "Forcing server shutdown"
         if get_pid; then
             kill -INT $(get_pid)
@@ -353,7 +353,7 @@ stop() {
         fi
     fi
 
-    DiscordMessage "Stopping" "Server has been stopped" "faillure"
+    DiscordMessage "Stopping" "Server has been stopped" "failure"
     LogAction "SERVER STOPPED" >> "$LOG_PATH"
     set_server_status "STOPPED"
 }
@@ -527,8 +527,8 @@ update() {
     if [[ "$skip_warn" == true ]]; then
         LogInfo "Skipping update warning delay (--no-warn)"
     elif [[ "${UPDATE_WARN_MINUTES}" =~ ^[0-9]+$ ]]; then
-        custom_rcon "broadcast The Server will update in ${UPDATE_WARN_MINUTES} minutes"
-        DiscordMessage "Update" "Server will update in ${UPDATE_WARN_MINUTES} minutes"
+        custom_rcon "serverchat The Server will update in ${UPDATE_WARN_MINUTES} minutes"
+        DiscordMessage "Update" "Server will update in ${UPDATE_WARN_MINUTES} minutes" "in-progress"
         sleep $((UPDATE_WARN_MINUTES * 60))
     fi
 
