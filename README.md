@@ -1,6 +1,7 @@
 # ARK Survival Ascended Docker Server
 
 🇯🇵 [日本語版の変更点解説は DIFF.ja.md を参照してください](./DIFF.ja.md)
+🇬🇧 [English changelog and differences: DIFF.md](./DIFF.md)
 
 This project relies on GloriousEggroll's Proton-GE in order to run the ARK Survival Ascended Server inside a docker container under Linux. This allows to run the ASA Windows server binaries on Linux easily.
 
