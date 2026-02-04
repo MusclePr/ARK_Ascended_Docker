@@ -1,10 +1,11 @@
 # ARK Survival Ascended Docker Server
 
+🇯🇵 [日本語版の変更点解説は DIFF.ja.md を参照してください](./DIFF.ja.md)
+
 This project relies on GloriousEggroll's Proton-GE in order to run the ARK Survival Ascended Server inside a docker container under Linux. This allows to run the ASA Windows server binaries on Linux easily.
 
 <!-- TOC start (generated with https://github.com/derlin/bitdowntoc) -->
 ### Table of Contents
-- [About the fork](#about-the-fork)
 - [Usage](#usage)
 - [Configuration](#configuration)
    * [Configuration variables](#configuration-variables)
@@ -13,42 +14,17 @@ This project relies on GloriousEggroll's Proton-GE in order to run the ARK Survi
 - [Hypervisors](#hypervisors)
 
 <!-- TOC end -->
-### About the fork
-This repository is a fork of [Luatan/ARK_Ascended_Docker](https://github.com/Luatan/ARK_Ascended_Docker), which provides the following features and improvements over the original [azixus/ARK_Ascended_Docker](https://github.com/azixus/ARK_Ascended_Docker):
-
-- **Discord Notification Support**: Added support for notifying server status and events to Discord (`scripts/manager/discord.sh`).
-- **Dynamic Config (Web)**: Added `web/` directory and `dynamicconfig.ini` to support dynamic configuration management.
-- **Cluster Configuration Support**: Examples for cluster setups are provided.
-- **Script Improvements**: Reorganized script structure (under `scripts/manager/`) and improved logic for backups and server management.
-- **Enhanced Healthchecks**: Improved healthcheck functionality for Docker containers.
-- **Configuration Samples**: `.env.sample` is provided to make configuration management easier.
-
-#### Changes from the fork
-
-- Use `cm2network/steamcmd:root` image for steamcmd.
-- Added `init.sh` to include steamcmd warmup for stable downloads.
-- Added `MULTIHOME` setting.
-- Added `SERVER_IP` setting.
-- Added `QUERY_PORT` setting.
-- Added `CLUSTER_ID` setting.
-- Added retry functionality for download failures.
-- Added `SERVERGAMELOG` setting.
-- Added `TZ` setting. (Note: log timestamps are always fixed to UTC).
-- Added `SLAVE_PORTS` setting. Specify the port numbers of other servers whose saving and stopping you want to synchronize when sharing programs or backups.
-- Added .env.sample with default.env for consistent referencing.
-- Added a countdown function when the server is down due to maintenance.
-- Added granular server status tracking via `.signals/status_${SERVER_PORT}`.
-
 ### Usage
 Download the container by cloning the repo and setting permissions:
 ```bash
 $ git clone https://github.com/Luatan/ARK_Ascended_Docker.git
 $ cd ARK_Ascended_Docker
+$ sudo chown -R 1000:1000 ./ark_*/
 ```
 
-Before starting the container, copy or rename the [default.env](./default.env) to .env and edit it to customize the starting parameters of the server. 
+Before starting the container, copy or rename the [.env.sample](./.env.sample) to .env and edit it to customize the starting parameters of the server. 
 ```bash
-$ cp default.env .env
+$ cp .env.sample .env
 ```
 You may also edit [Game.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/Game.ini) and [GameUserSettings.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini) for additional settings. Once this is done, start the container as follow:
 ```bash
@@ -75,9 +51,9 @@ asa_server  |[2023.10.31-17.07.03:329][  2]wp.Runtime.HLOD = "1"
 
 
 ### Configuration
-The main server configuration is done through the [compose.yml](./compose.yml) file. This allows you to change the server name, port, etc.
+The main server configuration is done through the [.env](./.env) file. This allows you to change the server name, port, passwords etc.
 
-The server files are stored in a mounted volume in the [ark_server](./ark_server/) folder. The additional configuration files are found in this folder: [Game.ini](./ark_server/ShooterGame/Saved/Config/WindowsServer/Game.ini), [GameUserSettings.ini](./ark_server/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini).
+The server files are stored in a mounted volume in the [ark_data](./ark_data/) folder. The additional configuration files are found in this folder: [Game.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/Game.ini), [GameUserSettings.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini).
 
 Unlike ARK Survival Evolved, only one port must be exposed to the internet, namely the `SERVER_PORT`. It is not necessary to expose the `RCON_PORT`.
 
@@ -89,25 +65,21 @@ We list some configuration options that may be used to customize the server belo
 | SERVER_MAP | Server map. | TheIsland_WP |
 | SESSION_NAME | Name of the server. | My Awesome ASA Server |
 | SERVER_PORT | Server listening port. | 7790 |
-| SLAVE_PORTS | Acts as the cluster master. Concatenate the SERVER_PORT of the slaves with a comma. | 7791,7792 |
-| CLUSTER_ID | Unique string to identify the server cluster. Enables server transfers between instances with the same ID. | - |
 | MAX_PLAYERS | Maximum number of players. | 10 |
 | SERVER_PASSWORD | Password required to join the server. Comment the variable to disable it. | MyServerPassword |
 | ARK_ADMIN_PASSWORD | Password required for cheats and RCON. | MyArkAdminPassword |
-| RCON_PORT | Port used to connect through RCON. | 32330 |
-| MULTIHOME | Specifies the IP address the server binds to. Useful when multiple network interfaces are available. | - |
-| SERVER_IP | Sets the `-ServerIP` flag. | - |
+| RCON_PORT | Port used to connect through RCON. To access RCON remotely, uncomment `#- "${RCON_PORT}:${RCON_PORT}/tcp"` in `docker-compose.yml`. | 32330 |
 | DISABLE_BATTLEYE | Comment to enable BattlEye on the server. | BattlEye Disabled |
 | MODS | Comma-separated list of mods to install on the server. | Disabled |
 | ARK_EXTRA_OPTS | Extra ?Argument=Value to add to the startup command. | ?ServerCrosshair=true?OverrideStructurePlatformPrevention=true?OverrideOfficialDifficulty=5.0?ShowFloatingDamageText=true?AllowFlyerCarryPvE=true |
 | ARK_EXTRA_DASH_OPTS | Extra dash arguments to add to the startup command. | -ForceAllowCaveFlyers -ForceRespawnDinos -AllowRaidDinoFeeding=true -ActiveEvent=Summer |
 
-To increase the available server memory, in [compose.yml](./compose.yml), increase the `deploy, resources, limits, memory: 16g` to a higher value.
+To increase the available server memory, in [docker-compose.yml](./docker-compose.yml), increase the `deploy, resources, limits, memory: 16g` to a higher value.
 
 ### Running multiple instances (cluster)
 If you want to run a cluster with two or more containers running at the same time, you will have to be aware of some things you have to change: 
-- First setup all instances according to the [usage](https://github.com/azixus/ARK_Ascended_Docker/edit/cluster/README.md#usage) and [configuration](https://github.com/azixus/ARK_Ascended_Docker/edit/cluster/README.md#configuration) steps.
-- For cluster configuration with shared program/mod files, see [compose.yml](./compose.yml). 
+- First setup all instances according to the [usage](#usage) and [configuration](#configuration) steps.
+- There is a template compose file for a cluster configuration see [docker-compose-cluster.yml](./docker-compose-cluster.yml). 
 - Create all ark_* folders in your clone directory with ``mkdir`` and make sure the permissions are correct.
 - Edit the shared Configuration in the [.env](./.env) file
 - Every setting which is Container specific can be added to the Docker Compose file int the environement tag for example:
@@ -117,43 +89,12 @@ If you want to run a cluster with two or more containers running at the same tim
       SESSION_NAME: My Awesome Server with The Island
   ```
   - Set the **port** to a different one for each instance, eg 7777, 7778, 7779 etc. in the docker compose file if not already correct.
-  - Set the same **CLUSTER_ID** for every instance you want to cluster in the `.env` or `compose.yml`. The `CLUSTER_ID` should be a random combination of letters and numbers, don't use special characters.
-    ```yaml
-    environment:
-        CLUSTER_ID: my-shared-cluster-123
+  - Add `-clusterID=[yourclusterid]` to the `ARK_EXTRA_DASH_OPTS` with the same `clusterID` for every instance you want to cluster. The `clusterID` should be a random combination of letters and numbers, don't use special characters. The line should somewhat look like this:
+    ```
+    ARK_EXTRA_DASH_OPTS=-ForceAllowCaveFlyers -ForceRespawnDinos -AllowRaidDinoFeeding=true -ActiveEvent=Summer -clusterID=changeThisId -ClusterDirOverride="/opt/shared-cluster"
     ```
 - Be sure that you have at least about **28-32GB** of memory available, especially if you use any mods
-- Start the cluster with ```docker compose up```
-
-> **Note on Backups:** In cluster configurations where `/opt/arkserver` is shared across containers, the manager uses a high-frequency synchronization mechanism (5s interval) via the `.signals/` directory to ensure all cluster nodes execute `saveworld` before a backup is taken. This ensures data consistency across all instances. If a node fails to respond within 60 seconds, the backup will proceed with a warning to ensure the backup schedule is maintained.
-
-#### Cluster update master / slave
-- Only **one** container must be allowed to update the shared server/mod volume.
-- Containers with `SLAVE_PORTS` specified are **master** nodes. They execute `manager update` at startup and enter cluster maintenance to update if necessary.
-- Containers without `SLAVE_PORTS` specified are **slave** nodes. They wait for the master to complete the update check before starting (stops on SIGINT/SIGTERM).
-- Set `SLAVE_PORTS` on the **master** container by concatenating the port numbers used by **slaves** with commas.
-- If multiple masters are started, the later one exits after detecting the shared lock at `/opt/arkserver/.signals/master.lock`.
-
-#### Lock and Flag Files Details (Stored in `.signals/`)
-The following files are created in the shared volume (`/opt/arkserver/.signals/`) to manage the cluster state.
-
-| Filename | Role | Description |
-| --- | --- | --- |
-| `maintenance.lock` | Maintenance Lock | Indicates that maintenance (like an update) is in progress. Slaves will stop or stay in a waiting state while this file exists. |
-| `master.lock` | Master Declaration Lock | A directory-based lock to identify the container acting as the update master (`AUTO_UPDATE_ENABLED=true`). Contains an `owner` file with host info. |
-| `update.request` | Update Request Flag | Indicates that an update has been requested via manager commands. The master will trigger maintenance upon detecting this flag. |
-| `ready.flag` | Startup Permission Flag | Signal from the master that the update-check is complete and servers are allowed to start. Slaves wait for this file. |
-| `waiting_${PORT}.flag` | Waiting Status Flag | Indicates that a specific server instance is waiting for maintenance to finish. Used for health checks. |
-| `autoresume_${PORT}.flag` | Auto-Resume Flag | Records servers that were running when maintenance started. Only servers with this flag will be auto-started after maintenance. |
-| `updating.lock` | Update in Progress Lock | Indicates that SteamCMD is currently downloading/updating files. Prevents starting the server with an incomplete installation. |
-
-#### Manual unlock (if the lock/flags remain after kill -9)
-1) Stop all containers (e.g. `docker compose down`)
-2) Remove the coordination signals in the shared volume:
-
-```bash
-docker compose run --rm asa_main bash -lc 'rm -rf /opt/arkserver/.signals && mkdir /opt/arkserver/.signals'
-```
+- Either replace docker-compose.yml with the file docker-compose-cluster.yml and start the cluster with ```docker compose up``` or use ```docker compose -f docker-compose-cluster.yml up```
 
 ### Manager commands
 The manager script supports several commands that we highlight below. 
@@ -266,42 +207,34 @@ Size of Backup folder: 142M     /var/backups/asa-server
 
 **Server restore Backup**
 
-The manager supports restoring a previously created backup. After using `./manager.sh restore` the manager will print out a list of all created backups and simply ask you which one you want to recover from. Alternatively, you can specify the backup filename as an argument: `./manager.sh restore [filename]`.
+The manager supports restoring a previously created backup. After using `./manager.sh restore` the manager will print out a list of all created backups and simply ask you which one you want to recover from.
 
-_In a cluster environment, all servers in the cluster will be stopped during restoration._
-_The server automatically gets restarted when restoring to a backup._
+_The server automatically get's restarted when restoring to a backup._
 ```bash
-./manager.sh restore backup_2023-11-08_19-11-24.tar.gz
+./manager.sh restore
+Stopping the server.
+Stopping server gracefully...
+Waiting 30s for the server to stop
+Done
+Here is a list of all your backup archives:
+1 - - - - - File: backup_2023-11-08_19-11-24.tar.gz
+2 - - - - - File: backup_2023-11-08_19-13-09.tar.gz
+3 - - - - - File: backup_2023-11-08_19-36-49.tar.gz
+4 - - - - - File: backup_2023-11-08_20-48-44.tar.gz
+5 - - - - - File: backup_2023-11-08_21-20-19.tar.gz
+6 - - - - - File: backup_2023-11-08_21-21-10.tar.gz
+Please input the number of the archive you want to restore.
+4
+backup_2023-11-08_20-48-44.tar.gz is getting restored ...
+backup restored successfully!
+Starting server on port 7790
+Server should be up in a few minutes
 ```
-
-**Graceful Shutdown and Countdown**
-
-When stopping the server (via `stop`, `update`, `restore`, or `restart`), if there are players connected, a 60-second countdown will be broadcasted to the server. If all players log out during the countdown, the server will stop immediately.
-
-You can customize the messages using the following environment variables in your `.env` file:
-- `MSG_MAINTENANCE_COUNTDOWN`: Message for countdown (e.g., "Server will stop for maintenance in %d seconds. Please log out in a safe place.")
-- `MSG_MAINTENANCE_COUNTDOWN_SOON`: Message for short countdown (e.g., "%d seconds")
-
 **RCON commands**
 ```bash
 $ ./manager.sh rcon "Broadcast Hello World"   
 Server received, But no response!!
 ```
-
-**Server Status Monitoring**
-
-The detailed status of each server can be checked via the file `.signals/status_${SERVER_PORT}`. This allows external tools to track the server's lifecycle more accurately:
-- `WAIT_MASTER`: Waiting for the update master to complete its check.
-- `WAIT_INSTALL`: Waiting for server binary verification or maintenance release.
-- `UPDATING`: Updating the server via `steamcmd`.
-- `STARTING`: Server process has started; waiting for RCON to become responsive.
-- `RUNNING`: RCON is responsive; server is fully operational.
-- `STOPPING`: Shutting down gracefully (broadcasting warnings, saving world).
-- `STOPPED`: Server process has exited.
-- `MAINTENANCE`: Stopped due to cluster maintenance.
-- `BACKUP_SAVE`: Saving world synchronously for backup.
-- `RESTORING`: Restoring from a backup.
-
 ### Hypervisors
 
 **Proxmox VM**

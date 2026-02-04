@@ -1,58 +1,66 @@
 services:
-  asa_main:
-    container_name: asa_main
-    tty: true
-    image: ghcr.io/musclepr/ark_ascended_docker:latest
-    build:
-      context: .
-      args:
-        - "TZ=${TZ:-Etc/UTC}"
-    env_file:
-      - default.env
-      - .env
-    environment:
-      - "SERVER_MAP=TheIsland_WP"
-      - "SESSION_NAME=${DOMAIN:-TEST} - The Island"
-      - "SERVER_PORT=7790"
-      - "QUERY_PORT=27030"
-      - "SLAVE_PORTS=7791"
-      - "AUTO_BACKUP_ENABLED=true"
-      - "AUTO_BACKUP_CRON_EXPRESSION=0 3 * * *"
-      - "AUTO_UPDATE_ENABLED=true"
-      - "AUTO_UPDATE_CRON_EXPRESSION=0 4 * * 0"
-    volumes:
-      - "./ark_server:/opt/arkserver"
-      - "./ark_backup:/var/backups"
-    ports:
-      - "7790:7790/udp"
-      - "27030:27030/udp"
-    stop_grace_period: 120s # player logout 60s + save game 5s + shutdown 25s + buffer
 
-  asa_sub1:
-    container_name: asa_sub1
-    tty: true
-    image: ghcr.io/musclepr/ark_ascended_docker:latest
-    env_file:
-      - default.env
-      - .env
-    environment:
-      - "SERVER_MAP=Extinction_WP"
-      - "SESSION_NAME=${DOMAIN:-TEST} - Extinction"
-      - "SERVER_PORT=7791"
-      - "QUERY_PORT=27031"
-      - "LOG_FILE=ShooterGame_sub1.log"
-    volumes:
-      - "./ark_server:/opt/arkserver"
-      - "./ark_backup:/var/backups:ro" # restore only
+  asa0:
+    extends:
+      file: common.yml
+      service: asa
+    container_name: asa0
     ports:
-      - "7791:7791/udp"
-      - "27031:27031/udp"
-    stop_grace_period: 120s
+      - "${ASA0_SERVER_PORT}:${ASA0_SERVER_PORT}/udp"
+      - "${ASA0_QUERY_PORT}:${ASA0_QUERY_PORT}/udp"
+    environment:
+      - "SERVER_MAP=${ASA0_SERVER_MAP}"
+      - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA0_SESSION_NAME}"
+      - "SERVER_PORT=${ASA0_SERVER_PORT}"
+      - "QUERY_PORT=${ASA0_QUERY_PORT}"
+      - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
+    # --- As asa0 is a master server, the following specific settings are required. ---
+      - "SLAVE_PORTS=${ASA_SLAVE_PORTS}"
+      - "AUTO_BACKUP_ENABLED=${ASA_AUTO_BACKUP_ENABLED}"
+      - "AUTO_BACKUP_CRON_EXPRESSION=${ASA_AUTO_BACKUP_CRON_EXPRESSION}"
+      - "AUTO_UPDATE_ENABLED=${ASA_AUTO_UPDATE_ENABLED}"
+      - "AUTO_UPDATE_CRON_EXPRESSION=${ASA_AUTO_UPDATE_CRON_EXPRESSION}"
+    volumes:
+      - ${HOST_CLUSTER_DIR:-.}/ark_backup:/var/backups
+
+  asa1:
+    extends:
+      file: common.yml
+      service: asa
+    container_name: asa1
+    ports:
+      - "${ASA1_SERVER_PORT}:${ASA1_SERVER_PORT}/udp"
+      - "${ASA1_QUERY_PORT}:${ASA1_QUERY_PORT}/udp"
+    environment:
+      - "SERVER_MAP=${ASA1_SERVER_MAP}"
+      - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA1_SESSION_NAME}"
+      - "SERVER_PORT=${ASA1_SERVER_PORT}"
+      - "QUERY_PORT=${ASA1_QUERY_PORT}"
+      - "DISCORD_WEBHOOK_URL=${ASA1_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
+      - "LOG_FILE=ShooterGame_asa1.log" # Avoid log file conflicts
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+#  asa<no>:
+#    extends:
+#      file: common.yml
+#      service: asa
+#    container_name: asa<no>
+#    ports:
+#      - "${ASA<no>_SERVER_PORT}:${ASA<no>_SERVER_PORT}/udp"
+#      - "${ASA<no>_QUERY_PORT}:${ASA<no>_QUERY_PORT}/udp"
+#    environment:
+#      - "SERVER_MAP=${ASA<no>_SERVER_MAP}"
+#      - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA<no>_SESSION_NAME}"
+#      - "SERVER_PORT=${ASA<no>_SERVER_PORT}"
+#      - "QUERY_PORT=${ASA<no>_QUERY_PORT}"
+#      - "DISCORD_WEBHOOK_URL=${ASA<no>_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
+#      - "LOG_FILE=ShooterGame_asa<no>.log" # Avoid log file conflicts
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
   asa_config:
-    image: busybox
     container_name: asa_config
+    image: busybox
     init: true
     command: httpd -vfh /web
     volumes:
-      - ./web:/web:ro
+      - ${HOST_CLUSTER_DIR:-.}/web:/web:ro

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Cluster signals common definitions
-export SIGNALS_DIR="/opt/arkserver/.signals"
+source "/opt/manager/helper.sh"
+
+mkdir -p "$SIGNALS_DIR"
+
 # Clean up old status files for this port on startup
 rm -f "${SIGNALS_DIR}/status_${SERVER_PORT}" 2>/dev/null || true
-
-source "/opt/manager/helper.sh"
 
 is_master=false
 master_lock_acquired=false
