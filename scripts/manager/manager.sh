@@ -238,7 +238,7 @@ rcon_wait_ready() {
 }
 
 start() {
-    if get_health >/dev/null || [[ -f "${STATUS_FILE}" && "$(cat ${STATUS_FILE})" =~ STARTING|RUNNING ]]; then
+    if get_health >/dev/null; then
         LogInfo "Server is already running."
         if [[ -n "${SLAVE_PORTS}" ]]; then
             touch "$ALLOWED_FILE" 2>/dev/null || true
@@ -251,7 +251,8 @@ start() {
     set_server_status "STARTING"
 
     # Start server in the background + nohup and save PID
-    DiscordMessage "Start" "The Server is starting" "success"
+    DISCORD_MSG_STARTING="${DISCORD_MSG_STARTING:-The Server is starting}"
+    DiscordMessage "Start $SESSION_NAME" "$DISCORD_MSG_STARTING" "success"
     nohup /opt/manager/server_start.sh >/dev/null 2>&1 &
     sleep 3
 
@@ -310,7 +311,8 @@ stop() {
     if [[ $1 == "--saveworld" ]]; then
         saveworld
     fi
-    DiscordMessage "Stopping" "Server will gracefully shutdown" "in-progress"
+    DISCORD_MSG_STOPPING="${DISCORD_MSG_STOPPING:-Server will gracefully shutdown}"
+    DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_STOPPING" "in-progress"
     LogAction "STOPPING SERVER" >> "$LOG_PATH"
     set_server_status "STOPPING"
 
@@ -337,7 +339,8 @@ stop() {
     fi
 
     if [[ "$force" == true ]]; then
-        DiscordMessage "Stopping" "Forcing the Server to shutdown" "failure"
+        DISCORD_MSG_FORCE_SHUTDOWN="${DISCORD_MSG_FORCE_SHUTDOWN:-Forcing the Server to shutdown}"
+        DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_FORCE_SHUTDOWN" "failure"
         LogWarn "Forcing server shutdown"
         if get_pid; then
             kill -INT $(get_pid)
@@ -353,13 +356,15 @@ stop() {
         fi
     fi
 
-    DiscordMessage "Stopping" "Server has been stopped" "failure"
+    DISCORD_MSG_STOPPED="${DISCORD_MSG_STOPPED:-The Server has been stopped}"
+    DiscordMessage "Stopped $SESSION_NAME" "$DISCORD_MSG_STOPPED" "failure"
     LogAction "SERVER STOPPED" >> "$LOG_PATH"
     set_server_status "STOPPED"
 }
 
 restart() {
-    DiscordMessage "Restart" "Restarting the Server" "in-progress"
+    DISCORD_MSG_RESTARTING="${DISCORD_MSG_RESTARTING:-Restarting the Server}"
+    DiscordMessage "Restart $SESSION_NAME" "$DISCORD_MSG_RESTARTING" "in-progress"
     LogAction "RESTARTING SERVER"
     stop "$1"
     start
@@ -501,10 +506,14 @@ update_required() {
 
 update() {
     local skip_warn=false
+    local skip_start=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-warn)
                 skip_warn=true
+                ;;
+            --no-restart)
+                skip_start=true
                 ;;
         esac
         shift
@@ -527,6 +536,8 @@ update() {
     if [[ "$skip_warn" == true ]]; then
         LogInfo "Skipping update warning delay (--no-warn)"
     elif [[ "${UPDATE_WARN_MINUTES}" =~ ^[0-9]+$ ]]; then
+        # マスターサーバーだけに通知しても仕方なく、プレイヤーが接続している全サーバーに通知する必要があります。
+        # カウントダウン通知があるので、この機能自体、削除しても良いかもしれません。
         custom_rcon "serverchat The Server will update in ${UPDATE_WARN_MINUTES} minutes"
         DiscordMessage "Update" "Server will update in ${UPDATE_WARN_MINUTES} minutes" "in-progress"
         sleep $((UPDATE_WARN_MINUTES * 60))
@@ -618,7 +629,7 @@ update() {
     trap - EXIT
 
     LogSuccess "Update completed"
-    start
+    [ "$skip_start" != true ] && start
 }
 
 backup(){

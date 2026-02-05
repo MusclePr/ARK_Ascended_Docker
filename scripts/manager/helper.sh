@@ -68,7 +68,7 @@ DiscordMessage() {
         level="info"
     fi
     if [ -n "${DISCORD_WEBHOOK_URL}" ]; then
-        /opt/manager/discord.sh "$title" "$message" "$level" "$enabled" "$webhook_url" &
+        /opt/manager/discord.sh "$title" "$message" "$level" "$enabled" "$webhook_url"
     fi
 }
 

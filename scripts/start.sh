@@ -87,7 +87,7 @@ if [[ "$is_master" == true ]]; then
     acquire_master_lock_or_exit
     LogInfo "SLAVE_PORTS detected, acting as update master"
     LogInfo "Running update check (and update if needed) via manager"
-    manager update --no-warn
+    manager update --no-warn --no-restart
 else
     LogInfo "No SLAVE_PORTS, acting as update slave"
     wait_for_master_allowed
@@ -109,16 +109,16 @@ LogInfo "Create Health Check Job"
 echo "$HEALTHCHECK_CRON_EXPRESSION bash /opt/healthcheck.sh" >> "$CRONTAB_FILE"
 supercronic -quiet -test -no-reap "$CRONTAB_FILE" || exit
 
-if [ "${BACKUP_ENABLED,,}" = true ]; then
-    LogInfo "BACKUP_ENABLED=${BACKUP_ENABLED,,}"
-    LogInfo "Adding cronjob for auto backups"
-    echo "$BACKUP_CRON_EXPRESSION bash /usr/local/bin/manager backup" >> "$CRONTAB_FILE"
+if [ "${AUTO_BACKUP_ENABLED,,}" = true ]; then
+    LogInfo "AUTO_BACKUP_ENABLED=${AUTO_BACKUP_ENABLED,,}"
+    LogInfo "Adding cronjob for auto backups: $AUTO_BACKUP_CRON_EXPRESSION"
+    echo "$AUTO_BACKUP_CRON_EXPRESSION bash /usr/local/bin/manager backup" >> "$CRONTAB_FILE"
     supercronic -quiet -test -no-reap "$CRONTAB_FILE" || exit
 fi
 
 if [ "${AUTO_UPDATE_ENABLED,,}" = true ]; then
     LogInfo "AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED,,}"
-    LogInfo "Adding cronjob for auto updating"
+    LogInfo "Adding cronjob for auto updating: $AUTO_UPDATE_CRON_EXPRESSION"
     echo "$AUTO_UPDATE_CRON_EXPRESSION bash /usr/local/bin/manager update" >> "$CRONTAB_FILE"
     supercronic -quiet -test -no-reap "$CRONTAB_FILE" || exit
 fi
@@ -184,7 +184,7 @@ process_log_line() {
                 local player_msg
                 DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s joined"}"
                 player_msg=$(printf "$DISCORD_MSG_JOINED" "$player")
-                DiscordMessage "${player_msg}" "EOSID: \`${id}\`${platform_msg}" "joined"
+                DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "joined"
             elif [[ "$line" =~ $left_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
                 local id="${BASH_REMATCH[2]}"
@@ -196,14 +196,14 @@ process_log_line() {
                 local player_msg
                 DISCORD_MSG_LEFT="${DISCORD_MSG_LEFT:-"%s left"}"
                 player_msg=$(printf "$DISCORD_MSG_LEFT" "$player")
-                DiscordMessage "${player_msg}" "EOSID: \`${id}\`${platform_msg}" "left"
+                DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "left"
             elif [[ "$line" =~ $cheat_regex ]]; then
                 local command="${BASH_REMATCH[1]}"
                 local player="${BASH_REMATCH[2]}"
                 local arkid="${BASH_REMATCH[3]}"
                 local steamid="${BASH_REMATCH[4]}"
                 if [ "${DISCORD_NOTIFY_CHEAT,,}" = "true" ]; then
-                    DiscordMessage "${player}" "ARKID: \`${arkid}\` / SteamID: \`${steamid}\` / Command: \`${command:0:4}...\`" "warn"
+                    DiscordMessage "${player} [${SERVER_MAP}]" "ARKID: \`${arkid}\` / SteamID: \`${steamid}\` / Command: \`${command:0:4}...\`" "warn"
                 fi
             elif [[ "$line" =~ $message_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
@@ -212,7 +212,7 @@ process_log_line() {
                 DiscordMessage "${player} (${id})" "${message}"
             elif [[ "$line" =~ $server_regex ]]; then
                 local message="${BASH_REMATCH[1]}"
-                DiscordMessage "SERVER" "${message}" "in-progress"
+                DiscordMessage "SERVER [${SERVER_MAP}]" "${message}" "in-progress"
             fi
         fi
     fi
