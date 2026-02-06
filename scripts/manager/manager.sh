@@ -721,15 +721,33 @@ restoreBackup(){
 
     wait_for_slave_acks "$request_started_epoch"
 
-    # Ensure cleanup on exit
-    trap 'rm -f "$LOCK_FILE" "$REQUEST_FILE";' EXIT
+    # Ensure cleanup on exit (also remove tmp restore dir if present)
+    local tmp_restore=""
+    trap 'rm -f "$LOCK_FILE" "$REQUEST_FILE"; [[ -n "${tmp_restore}" && -d "${tmp_restore}" ]] && rm -rf "${tmp_restore}" 2>/dev/null || true;' EXIT
 
     LogInfo "Stopping local server..."
-    stop
+    # Call stop in a subshell so any `exit` in stop() won't kill this script
+    ( stop )
+    stop_rc=$?
+
+    # Wait for server to actually stop (timeout 60s)
+    local waited=0
+    local stop_timeout=60
+    while get_pid >/dev/null && [ $waited -lt $stop_timeout ]; do
+        sleep 1
+        waited=$((waited+1))
+    done
+
+    if get_pid >/dev/null; then
+        LogError "Server did not stop after ${stop_timeout}s. Aborting restore."
+        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+        trap - EXIT
+        return 1
+    fi
 
     LogInfo "Restoring backup: $archive"
     set_server_status "RESTORING"
-    
+
     # Backup current Saved folder before restoring to avoid leftover files
     local saved_path="/opt/arkserver/ShooterGame/Saved"
     local saved_old_path="${saved_path}.old"
@@ -743,14 +761,74 @@ restoreBackup(){
         mv "$saved_path" "$saved_old_path"
     fi
 
-    tar -xzf "$archive" -C /opt/arkserver/ShooterGame/
-    if [[ $? == 0 ]]; then
-        restore_success=true
+    # Prepare temporary extraction directory
+    tmp_restore="/opt/arkserver/tmp/restore_$(date +%s)"
+    mkdir -p "$tmp_restore"
+
+    # Basic free-space check (archive size + 10MB margin)
+    if command -v df >/dev/null 2>&1 && command -v du >/dev/null 2>&1; then
+        available_kb=$(df -Pk /opt/arkserver | awk 'NR==2 {print $4}')
+        archive_kb=$(du -k "$archive" 2>/dev/null | cut -f1 || echo 0)
+        required_kb=$((archive_kb + 10240))
+        if [[ -n "$available_kb" && -n "$archive_kb" && $available_kb -lt $required_kb ]]; then
+            LogError "Not enough disk space to extract archive. Required ~${required_kb}KB, available ${available_kb}KB"
+            # Rollback
+            if [[ -d "$saved_old_path" && ! -d "$saved_path" ]]; then
+                mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+            fi
+            rm -rf "$tmp_restore" 2>/dev/null || true
+            rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+            trap - EXIT
+            return 1
+        fi
     fi
-    
+
+    # Extract to temporary dir, then move into place
+    tar -xzf "$archive" -C "$tmp_restore"
+    if [[ $? -ne 0 ]]; then
+        LogError "Tar extraction failed"
+        # Rollback
+        if [[ -d "$saved_old_path" ]]; then
+            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+        fi
+        rm -rf "$tmp_restore" 2>/dev/null || true
+        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+        trap - EXIT
+        return 1
+    fi
+
+    # Expect archive contains a top-level 'Saved' directory
+    if [[ ! -d "$tmp_restore/Saved" ]]; then
+        LogError "Archive does not contain Saved directory at top-level"
+        if [[ -d "$saved_old_path" ]]; then
+            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+        fi
+        rm -rf "$tmp_restore" 2>/dev/null || true
+        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+        trap - EXIT
+        return 1
+    fi
+
+    # Move extracted Saved into place
+    mv "$tmp_restore/Saved" "$saved_path"
+    if [[ $? -ne 0 ]]; then
+        LogError "Failed to move restored Saved into place"
+        if [[ -d "$saved_old_path" ]]; then
+            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+        fi
+        rm -rf "$tmp_restore" 2>/dev/null || true
+        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+        trap - EXIT
+        return 1
+    fi
+
+    rm -rf "$tmp_restore" 2>/dev/null || true
+
     # Cleanup maintenance lock immediately after restore before starting
     rm -f "$LOCK_FILE" "$REQUEST_FILE"
     trap - EXIT
+
+    restore_success=true
 
     if [[ "$restore_success" == false ]]; then
         LogError "An error occurred. Restoring failed."
