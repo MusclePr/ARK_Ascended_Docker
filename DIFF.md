@@ -110,14 +110,38 @@ This fork addresses running multiple maps with a single program while solving th
     - `DISCORD_MSG_LEFT` e.g. "%s left"
 
 - **Master/Slave support**:
-  - Master coordinates safe shutdowns and restores and instructs slaves to save world and sync during updates/backups. The `asa0` container acts as master and can be given `SLAVE_PORTS` to list slave `SERVER_PORT` values.
+  - The master is responsible for safely shutting down all servers when updating the program, and the slaves perform the synchronization process to safely shut down when requested by the master.
+  - The `asa0` container acts as master and can be given `SLAVE_PORTS` to list slave `SERVER_PORT` values.
 
-#### Test/run helpers
-- `run.sh`
-```bash
-Usage: run.sh {up|down|build|push}
-```
-  - `up` ... `docker compose up -d`
-  - `down` ... `docker compose down`
-  - `build` ... `docker build`
-  - `push` ... `docker push`
+    #### Test/run helpers
+    - `run.sh`
+    ```bash
+    Usage: run.sh {up|down|build|push}
+    ```
+      - `up` ... `docker compose up -d`
+      - `down` ... `docker compose down`
+      - `build` ... `docker build`
+      - `push` ... `docker push`
+
+    ## Backup/Restore changes (server-only backup)
+
+    This fork does not support saving multiple maps together as a cluster.
+    
+    Backups now include only the following subpaths under `/opt/arkserver/ShooterGame/Saved`:
+
+    - `Saved/SavedArks/${SERVER_MAP}` — map/tribe/player saves (exclude `*.profilebak`, `*.tribebak`, and `${SERVER_MAP}_*.ark`)
+    - `Saved/SaveGames` — mod save data
+    - `Saved/Config/WindowsServer` — `Game.ini`, `GameUserSettings.ini`, `Engine.ini`, etc.
+    - `Saved/Cluster/clusters/${CLUSTER_ID}` — cluster metadata
+
+    Directories that do not exist are ignored.
+    
+    Restore supports the following options:
+
+    - `--no-cluster` — do not restore cluster data
+    - `--no-mod` — do not restore mod `SaveGames`
+    - `--no-config` — do not restore `Config/WindowsServer`
+    - `--map-only` — shorthand; equivalent to `--no-cluster --no-mod --no-config`
+    - `--no-start` — do not automatically start the server after restore
+
+    These changes reduce backup size and simplify single-node restores. See `manager restore --help` and the Japanese changelog for details.

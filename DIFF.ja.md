@@ -110,7 +110,7 @@
     - `DISCORD_MSG_LEFT` ... 例）"%s が退出しました。"
 
 - **マスター／スレーブ対応**:
-  - プログラムの更新やリストア時にサーバーを安全に停止したり、バックアップ時には全サーバーにワールドの保存を促すには、マスターが責任持ってスレーブに対して同期処理を行わせる必要があります。
+  - プログラムの更新時に全サーバーを安全に停止する責任がマスターにあり、スレーブはマスターの要求に対して安全に停止する同期処理を行います。
   - `asa0` のコンテナはマスターとして、マスターのみに与えられる環境変数 `SLAVE_PORTS` を定義し、各スレーブ（`asa1`～）に定義されている `SERVER_PORT` のポート番号をカンマで列挙する事で連動可能になります。
 
 #### 動作確認環境の追加
@@ -122,3 +122,26 @@
   - down ... docker compose down
   - build ... docker build
   - push ... docker push
+
+## バックアップ／復元の変更（サーバー単体の限定バックアップ）
+
+このフォークでは、クラスタとして複数マップの一括保存をサポートしていません。
+
+バックアップは `/opt/arkserver/ShooterGame/Saved` の以下のサブパスのみを含みます。
+
+1. `Saved/SavedArks/${SERVER_MAP}` — マップ／トライブ／プレイヤーのセーブ（ただし `*.profilebak`, `*.tribebak`, `${SERVER_MAP}_*.ark` は除外）
+2. `Saved/SaveGames` — MOD のセーブデータ
+3. `Saved/Config/WindowsServer` — `Game.ini`, `GameUserSettings.ini`, `Engine.ini` 等の設定
+4. `Saved/Cluster/clusters/${CLUSTER_ID}` — クラスタメタデータ
+
+該当ディレクトリが存在しない場合は無視されます。
+
+復元には以下のオプションを追加しました。
+
+- `--no-cluster` — クラスタデータを復元しない
+- `--no-mod` — MOD の `SaveGames` を復元しない
+- `--no-config` — `Config/WindowsServer` を復元しない
+- `--map-only` — 省略形。`--no-cluster --no-mod --no-config` と同等
+- `--no-start` — 復元後に自動でサーバーを起動しない
+
+これによりバックアップ容量を削減し、単体ノードでの復元が容易になります。詳細は `manager restore --help` を参照してください。
