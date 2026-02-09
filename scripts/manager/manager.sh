@@ -637,47 +637,59 @@ backup(){
     tmp_path="/opt/arkserver/tmp/backup"
 
     LogInfo "Creating backup. Backups are saved in your backup volume."
-
-    # Cluster Synchronization
-    LogInfo "Signaling cluster nodes to save world..."
     set_server_status "BACKUP_SAVE"
-    mkdir -p "${SIGNALS_DIR}"
-    rm -f "${SIGNALS_DIR}/save.ack_*" 2>/dev/null || true
-    touch "${SAVE_REQUEST_FILE}"
 
     saveworld
-    touch "${SAVE_ACK_FILE}"
-    
-    # Wait for other nodes
-    wait_for_save_acks "$(date +%s)"
 
     mkdir -p $path
     mkdir -p $tmp_path
 
     archive_name="$(sanitize "$SESSION_NAME")_$(date +"%Y-%m-%d_%H-%M")"
 
-    # copy live path to another folder so tar doesnt get any write on read fails
-    LogInfo "Copying save folder"
-    cp -r /opt/arkserver/ShooterGame/Saved "$tmp_path"
-    if ! [ -d "$tmp_path" ]; then
-        LogError "Unable to copy save files"
-        # Cleanup signals even on failure
-        rm -f "${SAVE_REQUEST_FILE}" "${SAVE_ACK_FILE}"
-        return 1
+    # copy selected subpaths into temporary dir so tar doesn't get write-on-read failures
+    LogInfo "Copying selected Saved subpaths"
+    saved_base="/opt/arkserver/ShooterGame/Saved"
+    mkdir -p "$tmp_path"
+
+    # 1) SavedArks/${SERVER_MAP} (exclude patterns)
+    if [[ -n "${SERVER_MAP}" && -d "$saved_base/SavedArks/${SERVER_MAP}" ]]; then
+        mkdir -p "$tmp_path/Saved/SavedArks"
+        (cd "$saved_base/SavedArks" && tar -cf - --exclude='*.profilebak' --exclude='*.tribebak' --exclude="${SERVER_MAP}_*.ark" "${SERVER_MAP}") | tar -C "$tmp_path/Saved/SavedArks" -xf -
+    fi
+
+    # 2) SaveGames (mods)
+    if [[ -d "$saved_base/SaveGames" ]]; then
+        mkdir -p "$tmp_path/Saved"
+        tar -C "$saved_base" -cf - "SaveGames" | tar -C "$tmp_path/Saved" -xf -
+    fi
+
+    # 3) Config/WindowsServer
+    if [[ -d "$saved_base/Config/WindowsServer" ]]; then
+        mkdir -p "$tmp_path/Saved/Config"
+        tar -C "$saved_base/Config" -cf - "WindowsServer" | tar -C "$tmp_path/Saved/Config" -xf -
+    fi
+
+    # 4) Cluster/clusters/${CLUSTER_ID}
+    if [[ -n "${CLUSTER_ID}" && -d "$saved_base/Cluster/clusters/${CLUSTER_ID}" ]]; then
+        mkdir -p "$tmp_path/Saved/Cluster/clusters"
+        tar -C "$saved_base/Cluster/clusters" -cf - "${CLUSTER_ID}" | tar -C "$tmp_path/Saved/Cluster/clusters" -xf -
+    fi
+
+    # If no files were copied, warn but continue (no error)
+    if [[ -z "$(ls -A "$tmp_path" 2>/dev/null)" ]]; then
+        LogWarn "No matching Saved subpaths found to archive; creating empty backup metadata."
     fi
 
     LogInfo "Creating archive"
     tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
     if [[ $? == 1 ]]; then
         LogError "Creating backup failed" >> $LOG_PATH
-        rm -f "${SAVE_REQUEST_FILE}" "${SAVE_ACK_FILE}"
         return 1
     fi
     LogSuccess "Backup created" >> $LOG_PATH
 
     # Clean up Files
     rm -R "$tmp_path"
-    rm -f "${SAVE_REQUEST_FILE}" "${SAVE_ACK_FILE}"
     if get_health >/dev/null; then set_server_status "RUNNING"; fi
 
     if [[ "${OLD_BACKUP_DAYS}" =~ ^[0-9]+$ ]]; then
@@ -691,9 +703,34 @@ backup(){
 restoreBackup(){
     local backup_path=/var/backups
     local archive=""
+    local NO_CLUSTER=false
+    local NO_MOD=false
+    local NO_CONFIG=false
+    local NO_START=false
 
-    if [[ -n "$1" ]]; then
-        archive="${backup_path}/${1}"
+    # Parse args: <archive> [--no-cluster] [--no-mod] [--no-config] [--map-only]
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-cluster)
+                NO_CLUSTER=true; shift ;;
+            --no-mod)
+                NO_MOD=true; shift ;;
+            --no-config)
+                NO_CONFIG=true; shift ;;
+            --map-only)
+                NO_CLUSTER=true; NO_MOD=true; NO_CONFIG=true; shift ;;
+            --no-start)
+                NO_START=true; shift ;;
+            *)
+                if [[ -z "$archive" ]]; then
+                    archive="$1"
+                fi
+                shift ;;
+        esac
+    done
+
+    if [[ -n "$archive" ]]; then
+        archive="${backup_path}/${archive}"
         if [[ ! -f "$archive" ]]; then
             LogError "Backup file not found: $archive"
             return 1
@@ -712,18 +749,9 @@ restoreBackup(){
         fi
     fi
 
-    # Cluster Maintenance Start
-    rm -f "$ALLOWED_FILE" 2>/dev/null || true
-    local request_started_epoch=$(date +%s)
-    LogInfo "Requesting Cluster Maintenance for restore..."
-    touch "$REQUEST_FILE"
-    touch "$LOCK_FILE"
-
-    wait_for_slave_acks "$request_started_epoch"
-
     # Ensure cleanup on exit (also remove tmp restore dir if present)
     local tmp_restore=""
-    trap 'rm -f "$LOCK_FILE" "$REQUEST_FILE"; [[ -n "${tmp_restore}" && -d "${tmp_restore}" ]] && rm -rf "${tmp_restore}" 2>/dev/null || true;' EXIT
+    trap '[[ -n "${tmp_restore}" && -d "${tmp_restore}" ]] && rm -rf "${tmp_restore}" 2>/dev/null || true;' EXIT
 
     LogInfo "Stopping local server..."
     # Call stop in a subshell so any `exit` in stop() won't kill this script
@@ -748,17 +776,16 @@ restoreBackup(){
     LogInfo "Restoring backup: $archive"
     set_server_status "RESTORING"
 
-    # Backup current Saved folder before restoring to avoid leftover files
+    # Prepare saved base and track map-specific backup only (do not mv entire Saved)
     local saved_path="/opt/arkserver/ShooterGame/Saved"
-    local saved_old_path="${saved_path}.old"
     local restore_success=false
-    if [[ -d "$saved_path" ]]; then
-        if [[ -d "$saved_old_path" ]]; then
-            LogInfo "Removing existing ${saved_old_path}"
-            rm -rf "$saved_old_path"
-        fi
-        LogInfo "Moving current Saved directory to ${saved_old_path}"
-        mv "$saved_path" "$saved_old_path"
+    local saved_map_old=""
+    if [[ -n "${SERVER_MAP}" && -d "$saved_path/SavedArks/${SERVER_MAP}" ]]; then
+        # Move only the map-specific directory to a backup location (safe mv)
+        saved_map_old="${saved_path}/SavedArks/${SERVER_MAP}.old_$(date +%s)"
+        mkdir -p "$(dirname "$saved_map_old")" 2>/dev/null || true
+        mv "$saved_path/SavedArks/${SERVER_MAP}" "$saved_map_old" 2>/dev/null || true
+        LogInfo "Existing map data moved to ${saved_map_old}"
     fi
 
     # Prepare temporary extraction directory
@@ -772,12 +799,11 @@ restoreBackup(){
         required_kb=$((archive_kb + 10240))
         if [[ -n "$available_kb" && -n "$archive_kb" && $available_kb -lt $required_kb ]]; then
             LogError "Not enough disk space to extract archive. Required ~${required_kb}KB, available ${available_kb}KB"
-            # Rollback
-            if [[ -d "$saved_old_path" && ! -d "$saved_path" ]]; then
-                mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+            # Rollback map-specific backup if present
+            if [[ -n "$saved_map_old" && ! -d "$saved_path/SavedArks/${SERVER_MAP}" ]]; then
+                mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
             fi
             rm -rf "$tmp_restore" 2>/dev/null || true
-            rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
             trap - EXIT
             return 1
         fi
@@ -787,12 +813,11 @@ restoreBackup(){
     tar -xzf "$archive" -C "$tmp_restore"
     if [[ $? -ne 0 ]]; then
         LogError "Tar extraction failed"
-        # Rollback
-        if [[ -d "$saved_old_path" ]]; then
-            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+        # Rollback map-specific backup if present
+        if [[ -n "$saved_map_old" ]]; then
+            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
         fi
         rm -rf "$tmp_restore" 2>/dev/null || true
-        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
         trap - EXIT
         return 1
     fi
@@ -800,48 +825,92 @@ restoreBackup(){
     # Expect archive contains a top-level 'Saved' directory
     if [[ ! -d "$tmp_restore/Saved" ]]; then
         LogError "Archive does not contain Saved directory at top-level"
-        if [[ -d "$saved_old_path" ]]; then
-            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+        if [[ -n "$saved_map_old" ]]; then
+            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
         fi
         rm -rf "$tmp_restore" 2>/dev/null || true
-        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
         trap - EXIT
         return 1
     fi
+    # Move selected subpaths into place
+    # Detect if other servers are running (via status files). If so,
+    # do NOT restore mods/config/cluster and log a warning.
+    other_running=false
+    if [[ -n "${SLAVE_PORTS:-}" ]]; then
+        IFS=',' read -r -a _ports <<< "${SLAVE_PORTS}" || true
+        for _p in "${_ports[@]}"; do
+            _p="${_p//[[:space:]]/}"
+            [[ -z "$_p" ]] && continue
+            [[ "$_p" == "${SERVER_PORT}" ]] && continue
+            if [[ -f "${SIGNALS_DIR}/status_${_p}" ]]; then
+                st=$(cat "${SIGNALS_DIR}/status_${_p}" 2>/dev/null || true)
+                if [[ "$st" == "RUNNING" || "$st" == "UP" || "$st" == "STARTING" ]]; then
+                    other_running=true
+                    break
+                fi
+            fi
+        done
+    fi
 
-    # Move extracted Saved into place
-    mv "$tmp_restore/Saved" "$saved_path"
-    if [[ $? -ne 0 ]]; then
-        LogError "Failed to move restored Saved into place"
-        if [[ -d "$saved_old_path" ]]; then
-            mv "$saved_old_path" "$saved_path" 2>/dev/null || true
+    # Always restore map data (SavedArks/${SERVER_MAP}) if present - allowed to mv
+    if [[ -n "${SERVER_MAP}" && -d "$tmp_restore/Saved/SavedArks/${SERVER_MAP}" ]]; then
+        mkdir -p "$saved_path/SavedArks"
+        mv "$tmp_restore/Saved/SavedArks/${SERVER_MAP}" "$saved_path/SavedArks/"
+    fi
+
+    # Restore SaveGames (mods) if present and allowed; do not rm -rf entire dirs
+    if [[ -d "$tmp_restore/Saved/SaveGames" ]]; then
+        if [[ "$NO_MOD" == true || "$other_running" == true ]]; then
+            LogWarn "Skipping restoration of SaveGames (mods) because --no-mod provided or other servers are running."
+        else
+            mkdir -p "$saved_path/SaveGames"
+            tar -C "$tmp_restore/Saved" -cf - "SaveGames" | tar -C "$saved_path" -xf -
         fi
-        rm -rf "$tmp_restore" 2>/dev/null || true
-        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
-        trap - EXIT
-        return 1
+    fi
+
+    # Restore Config/WindowsServer if present and allowed
+    if [[ -d "$tmp_restore/Saved/Config/WindowsServer" ]]; then
+        if [[ "$NO_CONFIG" == true || "$other_running" == true ]]; then
+            LogWarn "Skipping restoration of Config/WindowsServer because --no-config provided or other servers are running."
+        else
+            mkdir -p "$saved_path/Config"
+            tar -C "$tmp_restore/Saved/Config" -cf - "WindowsServer" | tar -C "$saved_path/Config" -xf -
+        fi
+    fi
+
+    # Restore cluster data if present and allowed
+    if [[ -n "${CLUSTER_ID}" && -d "$tmp_restore/Saved/Cluster/clusters/${CLUSTER_ID}" ]]; then
+        if [[ "$NO_CLUSTER" == true || "$other_running" == true ]]; then
+            LogWarn "Skipping restoration of Cluster data because --no-cluster provided or other servers are running."
+        else
+            mkdir -p "$saved_path/Cluster/clusters"
+            tar -C "$tmp_restore/Saved/Cluster/clusters" -cf - "${CLUSTER_ID}" | tar -C "$saved_path/Cluster/clusters" -xf -
+        fi
     fi
 
     rm -rf "$tmp_restore" 2>/dev/null || true
-
-    # Cleanup maintenance lock immediately after restore before starting
-    rm -f "$LOCK_FILE" "$REQUEST_FILE"
     trap - EXIT
 
     restore_success=true
 
     if [[ "$restore_success" == false ]]; then
         LogError "An error occurred. Restoring failed."
-        if [[ -d "$saved_old_path" ]]; then
-            LogInfo "Rolling back: Moving ${saved_old_path} back to Saved"
-            mv "$saved_old_path" "$saved_path"
+        if [[ -n "$saved_map_old" ]]; then
+            LogInfo "Rolling back: Moving ${saved_map_old} back to SavedArks/${SERVER_MAP}"
+            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
         fi
         return 1
     fi
 
     LogSuccess "Backup restored successfully!"
-    LogInfo "Previous data was moved to ${saved_old_path}"
-    start
+    if [[ -n "$saved_map_old" ]]; then
+        LogInfo "Previous map data was moved to ${saved_map_old}"
+    fi
+    if [[ "$NO_START" == true ]]; then
+        LogInfo "Skipping automatic start after restore (--no-start)"
+    else
+        start
+    fi
 }
 
 # Main function
@@ -884,7 +953,7 @@ main() {
             backup
             ;;
         "restore")
-            restoreBackup "$option"
+            restoreBackup "${@:2}"
             ;;
         *)
             LogError "Invalid action. Supported actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance, check_signals."
@@ -898,6 +967,7 @@ if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <action> [options]"
     echo "  update options: --no-warn"
     echo "  stop/restart options: --saveworld"
+    echo "  restore options: --no-cluster --no-mod --no-config --map-only"
     echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance, check_signals."
     exit 1
 fi
