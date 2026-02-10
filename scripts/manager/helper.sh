@@ -17,6 +17,7 @@ export LOG_PATH="${LOG_DIR}/${LOG_FILE:-ShooterGame.log}"
 # Cluster signals common definitions
 export SIGNALS_DIR="/opt/arkserver/.signals"
 export REQUEST_FILE="${SIGNALS_DIR}/update.request"
+export REQUEST_JSON="${SIGNALS_DIR}/request.json"
 export LOCK_FILE="${SIGNALS_DIR}/maintenance.lock"
 export WAITING_FILE="${SIGNALS_DIR}/waiting_${SERVER_PORT}.flag"
 export ALLOWED_FILE="${SIGNALS_DIR}/ready.flag"
@@ -25,6 +26,71 @@ export MASTER_LOCK_OWNER_FILE="${MASTER_LOCK_DIR}/owner"
 export UPDATING_FLAG="${SIGNALS_DIR}/updating.lock"
 export RESUME_FLAG="${SIGNALS_DIR}/autoresume_${SERVER_PORT}.flag"
 export STATUS_FILE="${SIGNALS_DIR}/status_${SERVER_PORT}"
+
+# JSON request helpers
+# Write JSON atomically into destination (validates JSON with jq)
+json_atomic_write() {
+    local dest="$1"
+    local src="$2"
+    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
+    local tmp
+    tmp=$(mktemp "${SIGNALS_DIR}/.tmp.XXXXXX") || return 1
+    if [[ -n "$src" && -f "$src" ]]; then
+        cat "$src" > "$tmp"
+    else
+        # read from stdin
+        cat - > "$tmp"
+    fi
+    # Validate JSON
+    if ! jq -S . "$tmp" >/dev/null 2>&1; then
+        LogError "Invalid JSON for $dest"
+        rm -f "$tmp"
+        return 1
+    fi
+    mv -f "$tmp" "$dest"
+    return 0
+}
+
+# Create a JSON request file atomically. Usage: create_request_json <name> <json_file>
+create_request_json() {
+    # Unified single request file: ${REQUEST_JSON}
+    local _name="$1" jsonfile="$2"
+    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
+    # If a request already exists, reject to avoid overwriting
+    if [[ -e "${REQUEST_JSON}" ]]; then
+        LogError "A request already exists: ${REQUEST_JSON}"
+        return 1
+    fi
+    json_atomic_write "${REQUEST_JSON}" "$jsonfile" || return 1
+    return 0
+}
+
+# Move a processing request to done/failed with timestamped filename
+# Usage: mark_request_status <request_path> <status>
+mark_request_status() {
+    local reqpath="$1"
+    local status="$2"
+    local ts
+    ts=$(date -Is 2>/dev/null || date +%s)
+    local base
+    base=$(basename "$reqpath")
+    local dest
+    if [[ "$status" == "done" ]]; then
+        dest="${SIGNALS_DIR}/${base}.done.${ts}.json"
+    else
+        dest="${SIGNALS_DIR}/${base}.failed.${ts}.json"
+    fi
+    mv -f "$reqpath" "$dest" 2>/dev/null || return 1
+    return 0
+}
+
+# Convenience wrapper: write a response JSON file atomically
+# Usage: write_response_json <dest_path> <src_json_file>
+write_response_json() {
+    local dest="$1"
+    local src="$2"
+    json_atomic_write "$dest" "$src"
+}
 
 LogInfo() {
     Log "$1" "$WhiteText"
@@ -288,3 +354,23 @@ custom_rcon() {
     "${RCON_CMDLINE[@]}" "${@}" 2>/dev/null
     return 0
 }
+
+saveworld() {
+    if ! get_health >/dev/null ; then
+        LogWarn "Unable to save... Server not up"
+        return 1
+    fi
+
+    LogInfo "Saving world..."
+    out=$(custom_rcon SaveWorld)
+    res=$?
+    if [[ $res == 0 && "$out" == "World Saved" ]]; then
+        LogSuccess "Success!"
+    else
+        LogError "Failed."
+        return 1
+    fi
+    # sleep is nessecary because the server seems to write save files after the saveworld function ends.
+    sleep 5
+}
+

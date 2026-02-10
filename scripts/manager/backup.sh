@@ -6,16 +6,14 @@ set -euo pipefail
 
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
-# shellcheck source=./scripts/manager/cluster_requests.sh
-source "/opt/manager/cluster_requests.sh"
 
 mode="request"
 if [[ $# -gt 0 ]]; then
     mode="$1"
 fi
 
-# Local backup implementation migrated from manager.sh
-local_backup() {
+# backup implementation migrated from manager.sh
+backup() {
     local path="/var/backups"
     local tmp_path="/opt/arkserver/tmp/backup"
 
@@ -97,17 +95,21 @@ local_backup() {
 
 if [[ "$mode" == "request" ]]; then
     mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
-    local_ts=$(date -Is 2>/dev/null || date +%s)
-    payload=$(mktemp)
-    printf "requested_by=%s\ntimestamp=%s\n" "${USER:-$(whoami 2>/dev/null || echo unknown)}" "${local_ts}" > "$payload"
 
-    if [[ -f "${SIGNALS_DIR}/backup.request" ]]; then
-        LogError "A backup request already exists. Aborting."
+    local_ts=$(date -Is 2>/dev/null || date +%s)
+    # generate a simple request id
+    req_id="$(date +%s)-$$-$RANDOM"
+    payload=$(mktemp)
+    # Build JSON payload
+    jq -n --arg action "backup" --arg request_id "$req_id" --arg requested_by "${USER:-$(whoami 2>/dev/null || echo unknown)}" --arg timestamp "$local_ts" '{action:$action,request_id:$request_id,requested_by:$requested_by,timestamp:$timestamp}' > "$payload"
+
+    if [[ -e "${REQUEST_JSON}" ]]; then
+        LogError "A request already exists (${REQUEST_JSON}). Aborting."
         rm -f "$payload"
         exit 3
     fi
 
-    if ! create_request "backup" "$payload"; then
+    if ! create_request_json "backup" "$payload"; then
         LogError "Failed to create backup request (busy)."
         rm -f "$payload"
         exit 4
@@ -120,18 +122,25 @@ if [[ "$mode" == "request" ]]; then
     enter_maintenance "$request_started_epoch"
 
     LogInfo "Performing master-local backup now..."
-    if ! local_backup; then
+    if ! backup; then
         rc=$?
         LogError "Local backup failed with code $rc"
-        mark_request_done "backup" "failed"
+        # mark processing request as failed (use JSON-aware wrapper)
+        mark_request_status "${REQUEST_JSON}" "failed"
         exit $rc
     fi
 
-    mark_request_done "backup" "done"
+    # mark done
+    mark_request_status "${REQUEST_JSON}" "done"
     LogSuccess "Cluster backup completed on master. Releasing maintenance locks."
     exit_maintenance
     exit 0
-fi
 
-echo "Usage: $0 request"
-exit 1
+elif [[ "$mode" == "apply" ]]; then
+    # Perform local backup without creating a new request (used by worker)
+    backup
+    exit $?
+else
+    echo "Usage: $0 request|apply"
+    exit 1
+fi
