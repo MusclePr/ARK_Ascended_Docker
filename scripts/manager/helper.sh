@@ -44,8 +44,8 @@ LogAction() {
 Log() {
     local message="$1"
     local color="$2"
-    local prefix="$3"
-    local suffix="$4"
+    local prefix="${3:-}"
+    local suffix="${4:-}"
     printf "$color%s$RESET$LINE" "$prefix$message$suffix"
 }
 
@@ -255,3 +255,36 @@ master_release_after_start() {
     exit_maintenance
 }
 
+
+get_pid() {
+    pid=$(pgrep GameThread)
+    if [[ -z $pid ]]; then
+        return 1
+    fi
+    echo "$pid"
+    return 0
+}
+
+get_health() {
+    server_pid=$(get_pid)
+    steam_pid=$(pidof steamcmd)
+    if [[ "${steam_pid:-0}" != 0 ]]; then
+        echo "STARTING"
+        return 0
+    fi
+    if [[ "${server_pid:-0}" != 0 ]]; then
+        echo "UP"
+        return 0
+    else
+        echo "DOWN"
+        return 1
+    fi
+}
+
+custom_rcon() {
+    if ! get_health >/dev/null ; then
+        return 1
+    fi
+    "${RCON_CMDLINE[@]}" "${@}" 2>/dev/null
+    return 0
+}
