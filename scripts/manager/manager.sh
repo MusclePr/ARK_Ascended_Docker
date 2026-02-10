@@ -4,41 +4,6 @@ EOS_FILE=/opt/manager/.eos.config
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
-MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
-MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
-
-get_pid() {
-    pid=$(pgrep GameThread)
-    if [[ -z $pid ]]; then
-        return 1
-    fi
-    echo "$pid"
-    return 0
-}
-
-get_health() {
-    server_pid=$(get_pid)
-    steam_pid=$(pidof steamcmd)
-    if [[ "${steam_pid:-0}" != 0 ]]; then
-        echo "STARTING"
-        return 0
-    fi
-    if [[ "${server_pid:-0}" != 0 ]]; then
-        echo "UP"
-        return 0
-    else
-        echo "DOWN"
-        return 1
-    fi
-}
-
-custom_rcon() {
-    if ! get_health >/dev/null ; then
-        return 1
-    fi
-    "${RCON_CMDLINE[@]}" "${@}" 2>/dev/null
-    return 0
-}
 full_status_setup() {
     # Check PDB is still available
     if [[ ! -f "/opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb" ]]; then 
@@ -260,6 +225,9 @@ start() {
     # Wait for RCON before signaling readiness (if master) and setting RUNNING status
     rcon_wait_ready &
 }
+
+MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
+MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
 
 stop() {
     if ! get_health >/dev/null ; then
@@ -927,7 +895,13 @@ main() {
             update "${@:2}"
             ;;
         "backup")
-            backup
+            if [[ -x "/opt/manager/backup.sh" ]]; then
+                /opt/manager/backup.sh request
+                exit $?
+            else
+                LogError "Backup script not found: /opt/manager/backup.sh"
+                exit 1
+            fi
             ;;
         "restore")
             restoreBackup "${@:2}"
