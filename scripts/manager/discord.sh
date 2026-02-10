@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 # Defaults
 DEFAULT_CONNECT_TIMEOUT=5

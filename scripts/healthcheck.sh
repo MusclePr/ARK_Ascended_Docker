@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
 if ! /usr/local/bin/manager health >/dev/null; then
