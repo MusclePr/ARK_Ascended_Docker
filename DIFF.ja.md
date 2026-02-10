@@ -116,12 +116,13 @@
 #### 動作確認環境の追加
 - `run.sh`
   ```bash
-  Usage: run.sh {up|down|build|push}
+  Usage: run.sh {up|down|build|push|shellcheck}
   ```
   - up ... docker compose up -d
   - down ... docker compose down
   - build ... docker build
   - push ... docker push
+  - shellcheck ... shellcheck
 
 ## バックアップ／復元の変更（クラスター単位のバックアップ）
 
