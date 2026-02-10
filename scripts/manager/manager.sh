@@ -631,10 +631,30 @@ backup(){
     saved_base="/opt/arkserver/ShooterGame/Saved"
     mkdir -p "$tmp_path"
 
-    # 1) SavedArks/${SERVER_MAP} (exclude patterns)
-    if [[ -n "${SERVER_MAP}" && -d "$saved_base/SavedArks/${SERVER_MAP}" ]]; then
-        mkdir -p "$tmp_path/Saved/SavedArks"
-        (cd "$saved_base/SavedArks" && tar -cf - --exclude='*.profilebak' --exclude='*.tribebak' --exclude="${SERVER_MAP}_*.ark" "${SERVER_MAP}") | tar -C "$tmp_path/Saved/SavedArks" -xf -
+    # 1) SavedArks/* (exclude patterns)
+    # Iterate all entries under SavedArks and extract the basename into __m for use in --exclude
+    if [[ -d "$saved_base/SavedArks" ]]; then
+        found_any=false
+        for __entry in "$saved_base/SavedArks"/*; do
+            # skip if glob didn't match any files
+            if [[ ! -e "${__entry}" ]]; then
+                continue
+            fi
+            __m=$(basename "${__entry}")
+            # skip empty names
+            [[ -z "${__m}" ]] && continue
+            # only handle directories (maps)
+            if [[ -d "${__entry}" ]]; then
+                found_any=true
+                mkdir -p "$tmp_path/Saved/SavedArks"
+                (cd "$saved_base/SavedArks" && tar -cf - --exclude='*.profilebak' --exclude='*.tribebak' --exclude="${__m}_*.ark" "${__m}") | tar -C "$tmp_path/Saved/SavedArks" -xf -
+            fi
+        done
+        if [[ "$found_any" != true ]]; then
+            LogWarn "No SavedArks/* subpaths found to archive; skipping SavedArks."
+        fi
+    else
+        LogWarn "$saved_base/SavedArks not found; skipping SavedArks backups."
     fi
 
     # 2) SaveGames (mods)
