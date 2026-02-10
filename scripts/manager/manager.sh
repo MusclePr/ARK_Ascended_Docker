@@ -402,6 +402,7 @@ check_maintenance() {
     fi
 
     if [[ -f "$LOCK_FILE" || -f "$REQUEST_FILE" ]]; then
+        # Mark that this server is waiting for maintenance and stop safely
         touch "$WAITING_FILE"
         set_server_status "MAINTENANCE"
         if get_health >/dev/null; then
@@ -524,13 +525,8 @@ update() {
 
     local request_started_epoch
     request_started_epoch=$(date +%s)
-    LogInfo "Requesting Cluster Maintenance..."
-    touch "$REQUEST_FILE"
-
-    LogInfo "Initiating Cluster Maintenance..."
-    touch "$LOCK_FILE"
-
-    wait_for_slave_acks "$request_started_epoch"
+    # Use helper to request/initiate cluster maintenance and wait for slaves
+    enter_maintenance "$request_started_epoch"
 
     trap 'if [[ "${UPDATE_KEEP_LOCK:-}" == "true" ]]; then rm -f "$UPDATING_FLAG"; else rm -f "$UPDATING_FLAG"; rm -f "$LOCK_FILE"; rm -f "$REQUEST_FILE"; fi' EXIT
 
@@ -600,37 +596,14 @@ update() {
     fi
     # If we are skipping start (or dry-run), do not attempt to start/wait for RCON here.
     if [[ "$skip_start" != true ]]; then
-        LogInfo "Starting server after update"
-        start
-
-        # If this is a clustered setup, wait for the master to signal readiness
-        # by creating the ALLOWED_FILE. rcon_wait_ready creates that file when RCON
-        # responds. We poll with a timeout to avoid deadlocks.
-        if [[ -n "${SLAVE_PORTS}" ]]; then
-            local wait_timeout=900 # 15 minutes
-            local waited=0
-            local wait_interval=5
-            LogInfo "Waiting for cluster allowed signal (ALLOWED_FILE)..."
-            while [ $waited -lt $wait_timeout ]; do
-                if [[ -f "$ALLOWED_FILE" ]]; then
-                    LogSuccess "ALLOWED_FILE detected. Releasing cluster locks."
-                    break
-                fi
-                sleep $wait_interval
-                waited=$((waited + wait_interval))
-            done
-            if [[ ! -f "$ALLOWED_FILE" ]]; then
-                LogWarn "Timeout waiting for ALLOWED_FILE (${wait_timeout}s). Releasing locks anyway to avoid prolonged downtime."
-            fi
-        fi
+        # Use master helper to start, wait for RCON/ALLOWED_FILE, then release locks
+        master_release_after_start 900
     else
         LogInfo "Skipping automatic start/wait (skip_start=${skip_start})"
     fi
 
     # Final cleanup: remove updating flag and release cluster maintenance locks
-    rm -f "$UPDATING_FLAG"
-    rm -f "$LOCK_FILE"
-    rm -f "$REQUEST_FILE"
+    exit_maintenance
 
     trap - EXIT
 
@@ -708,64 +681,91 @@ backup(){
 }
 
 restoreBackup(){
+    # Simplified cluster-wide restore using enter_maintenance/exit_maintenance
+    # Modes:
+    #   --request [<archive>]  : create a restore request (default interactive)
+    #   --apply <archive>      : actually apply the restore (used by monitor/worker)
+    local mode="request"
     local backup_path=/var/backups
     local archive=""
-    local NO_CLUSTER=false
-    local NO_MOD=false
-    local NO_CONFIG=false
-    local NO_START=false
 
-    # Parse args: <archive> [--no-cluster] [--no-mod] [--no-config] [--map-only]
-    while [[ $# -gt 0 ]]; do
+    if [[ $# -gt 0 ]]; then
         case "$1" in
-            --no-cluster)
-                NO_CLUSTER=true; shift ;;
-            --no-mod)
-                NO_MOD=true; shift ;;
-            --no-config)
-                NO_CONFIG=true; shift ;;
-            --map-only)
-                NO_CLUSTER=true; NO_MOD=true; NO_CONFIG=true; shift ;;
-            --no-start)
-                NO_START=true; shift ;;
+            --apply)
+                mode="apply"
+                shift
+                archive="$1"
+                ;;
+            --request)
+                mode="request"
+                shift
+                archive="$1"
+                ;;
             *)
-                if [[ -z "$archive" ]]; then
-                    archive="$1"
-                fi
-                shift ;;
+                # default: treat positional as archive but still create request interactively
+                archive="$1"
+                mode="request"
+                ;;
         esac
-    done
+    fi
 
-    if [[ -n "$archive" ]]; then
-        archive="${backup_path}/${archive}"
-        if [[ ! -f "$archive" ]]; then
-            LogError "Backup file not found: $archive"
-            return 1
+    if [[ "$mode" == "request" ]]; then
+        # Resolve archive choice
+        if [[ -n "$archive" ]]; then
+            # Non-interactive mode
+            # if user passed basename, allow both absolute and relative within backup_path
+            if [[ ! "$archive" =~ ^/ ]]; then
+                archive="${backup_path}/${archive}"
+            fi
+            if [[ ! -f "$archive" ]]; then
+                LogError "Backup file not found: $archive"
+                return 1
+            fi
+        else
+            # Interactive mode
+            local -i backup_count
+            backup_count=$(find "$backup_path" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l)
+            if [[ $backup_count -eq 0 ]]; then
+                LogError "You haven't created any backups yet."
+                return 1
+            fi
+            LogInfo "Please choose the archive to restore:"
+            archive=$(SelectArchive "$backup_path")
+            if [[ -z "$archive" ]]; then
+                LogError "No Selection was made!"
+                return 1
+            fi
+            echo -n "Create restore request for '$archive'? [y/N]: "
+            read -r ans
+            if [[ ! $ans =~ ^[Yy]$ ]]; then
+                LogInfo "Aborted by user. No request created."
+                return 2
+            fi
         fi
-    else
-        local -i backup_count
-        # Use find to count files to handle arbitrary filenames safely (SC2012)
-        backup_count=$(find "$backup_path" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l)
-        if [[ $backup_count -eq 0 ]]; then
-            LogError "You haven't created any backups yet."
-            return 1
+
+        mkdir -p "$SIGNALS_DIR" 2>/dev/null || true
+        local rqf="$SIGNALS_DIR/restore.request"
+        if [[ -f "$rqf" ]]; then
+            LogError "A restore request already exists: $rqf. Please wait for it to be processed or remove it manually."
+            return 3
         fi
-        LogInfo "Please choose the archive to restore:"
-        archive=$(SelectArchive "$backup_path")
-        if [[ -z "$archive" ]]; then
-            LogError "No Selection was made!"
-            return 1
-        fi
+        printf "archive=%s\nrequested_by=%s\ntimestamp=%s\n" "$archive" "${USER:-$(whoami 2>/dev/null || echo unknown)}" "$(date -Is)" > "$rqf"
+        LogSuccess "Restore request created: $rqf"
+        return 0
     fi
 
     # Ensure cleanup on exit (also remove tmp restore dir if present)
     local tmp_restore=""
     trap '[[ -n "${tmp_restore}" && -d "${tmp_restore}" ]] && rm -rf "${tmp_restore}" 2>/dev/null || true;' EXIT
 
-    LogInfo "Stopping local server..."
-    # Call stop in a subshell so any `exit` in stop() won't kill this script
-    ( stop )
-    #stop_rc=$?
+    # Enter cluster maintenance mode (requests cluster-wide stop)
+    local request_started_epoch
+    request_started_epoch=$(date +%s)
+    enter_maintenance "$request_started_epoch"
+
+    LogInfo "Stopping local server for restore..."
+    # Stop this node gracefully
+    stop --saveworld
 
     # Wait for server to actually stop (timeout 60s)
     local waited=0
@@ -777,7 +777,7 @@ restoreBackup(){
 
     if get_pid >/dev/null; then
         LogError "Server did not stop after ${stop_timeout}s. Aborting restore."
-        rm -f "$LOCK_FILE" "$REQUEST_FILE" 2>/dev/null || true
+        exit_maintenance
         trap - EXIT
         return 1
     fi
@@ -785,140 +785,95 @@ restoreBackup(){
     LogInfo "Restoring backup: $archive"
     set_server_status "RESTORING"
 
-    # Prepare saved base and track map-specific backup only (do not mv entire Saved)
-    local saved_path="/opt/arkserver/ShooterGame/Saved"
-    local restore_success=false
-    local saved_map_old=""
-    if [[ -n "${SERVER_MAP}" && -d "$saved_path/SavedArks/${SERVER_MAP}" ]]; then
-        # Move only the map-specific directory to a backup location (safe mv)
-        saved_map_old="${saved_path}/SavedArks/${SERVER_MAP}.old_$(date +%s)"
-        mkdir -p "$(dirname "$saved_map_old")" 2>/dev/null || true
-        mv "$saved_path/SavedArks/${SERVER_MAP}" "$saved_map_old" 2>/dev/null || true
-        LogInfo "Existing map data moved to ${saved_map_old}"
-    fi
-
-    # Prepare temporary extraction directory
-    tmp_restore="/opt/arkserver/tmp/restore_$(date +%s)"
-    mkdir -p "$tmp_restore"
-
-    # Basic free-space check (archive size + 10MB margin)
-    if command -v df >/dev/null 2>&1 && command -v du >/dev/null 2>&1; then
-        available_kb=$(df -Pk /opt/arkserver | awk 'NR==2 {print $4}')
-        archive_kb=$(du -k "$archive" 2>/dev/null | cut -f1 || echo 0)
-        required_kb=$((archive_kb + 10240))
-        if [[ -n "$available_kb" && -n "$archive_kb" && $available_kb -lt $required_kb ]]; then
-            LogError "Not enough disk space to extract archive. Required ~${required_kb}KB, available ${available_kb}KB"
-            # Rollback map-specific backup if present
-            if [[ -n "$saved_map_old" && ! -d "$saved_path/SavedArks/${SERVER_MAP}" ]]; then
-                mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
-            fi
-            rm -rf "$tmp_restore" 2>/dev/null || true
-            trap - EXIT
-            return 1
-        fi
-    fi
-
-    # Extract to temporary dir, then move into place
-    if ! tar -xzf "$archive" -C "$tmp_restore"; then
+    # Simple extraction: unpack archive directly into /opt/arkserver
+    if ! tar -xzf "$archive" -C /opt/arkserver --overwrite; then
         LogError "Tar extraction failed"
-        # Rollback map-specific backup if present
-        if [[ -n "$saved_map_old" ]]; then
-            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
-        fi
-        rm -rf "$tmp_restore" 2>/dev/null || true
         trap - EXIT
-        return 1
-    fi
-
-    # Expect archive contains a top-level 'Saved' directory
-    if [[ ! -d "$tmp_restore/Saved" ]]; then
-        LogError "Archive does not contain Saved directory at top-level"
-        if [[ -n "$saved_map_old" ]]; then
-            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
-        fi
-        rm -rf "$tmp_restore" 2>/dev/null || true
-        trap - EXIT
-        return 1
-    fi
-    # Move selected subpaths into place
-    # Detect if other servers are running (via status files). If so,
-    # do NOT restore mods/config/cluster and log a warning.
-    other_running=false
-    if [[ -n "${SLAVE_PORTS:-}" ]]; then
-        IFS=',' read -r -a _ports <<< "${SLAVE_PORTS}" || true
-        for _p in "${_ports[@]}"; do
-            _p="${_p//[[:space:]]/}"
-            [[ -z "$_p" ]] && continue
-            [[ "$_p" == "${SERVER_PORT}" ]] && continue
-            if [[ -f "${SIGNALS_DIR}/status_${_p}" ]]; then
-                st=$(cat "${SIGNALS_DIR}/status_${_p}" 2>/dev/null || true)
-                if [[ "$st" == "RUNNING" || "$st" == "UP" || "$st" == "STARTING" ]]; then
-                    other_running=true
-                    break
-                fi
-            fi
-        done
-    fi
-
-    # Always restore map data (SavedArks/${SERVER_MAP}) if present - allowed to mv
-    if [[ -n "${SERVER_MAP}" && -d "$tmp_restore/Saved/SavedArks/${SERVER_MAP}" ]]; then
-        mkdir -p "$saved_path/SavedArks"
-        mv "$tmp_restore/Saved/SavedArks/${SERVER_MAP}" "$saved_path/SavedArks/"
-    fi
-
-    # Restore SaveGames (mods) if present and allowed; do not rm -rf entire dirs
-    if [[ -d "$tmp_restore/Saved/SaveGames" ]]; then
-        if [[ "$NO_MOD" == true || "$other_running" == true ]]; then
-            LogWarn "Skipping restoration of SaveGames (mods) because --no-mod provided or other servers are running."
-        else
-            mkdir -p "$saved_path/SaveGames"
-            tar -C "$tmp_restore/Saved" -cf - "SaveGames" | tar -C "$saved_path" -xf -
-        fi
-    fi
-
-    # Restore Config/WindowsServer if present and allowed
-    if [[ -d "$tmp_restore/Saved/Config/WindowsServer" ]]; then
-        if [[ "$NO_CONFIG" == true || "$other_running" == true ]]; then
-            LogWarn "Skipping restoration of Config/WindowsServer because --no-config provided or other servers are running."
-        else
-            mkdir -p "$saved_path/Config"
-            tar -C "$tmp_restore/Saved/Config" -cf - "WindowsServer" | tar -C "$saved_path/Config" -xf -
-        fi
-    fi
-
-    # Restore cluster data if present and allowed
-    if [[ -n "${CLUSTER_ID}" && -d "$tmp_restore/Saved/Cluster/clusters/${CLUSTER_ID}" ]]; then
-        if [[ "$NO_CLUSTER" == true || "$other_running" == true ]]; then
-            LogWarn "Skipping restoration of Cluster data because --no-cluster provided or other servers are running."
-        else
-            mkdir -p "$saved_path/Cluster/clusters"
-            tar -C "$tmp_restore/Saved/Cluster/clusters" -cf - "${CLUSTER_ID}" | tar -C "$saved_path/Cluster/clusters" -xf -
-        fi
-    fi
-
-    rm -rf "$tmp_restore" 2>/dev/null || true
-    trap - EXIT
-
-    restore_success=true
-
-    if [[ "$restore_success" == false ]]; then
-        LogError "An error occurred. Restoring failed."
-        if [[ -n "$saved_map_old" ]]; then
-            LogInfo "Rolling back: Moving ${saved_map_old} back to SavedArks/${SERVER_MAP}"
-            mv "$saved_map_old" "$saved_path/SavedArks/${SERVER_MAP}" 2>/dev/null || true
-        fi
+        exit_maintenance
         return 1
     fi
 
     LogSuccess "Backup restored successfully!"
-    if [[ -n "$saved_map_old" ]]; then
-        LogInfo "Previous map data was moved to ${saved_map_old}"
-    fi
-    if [[ "$NO_START" == true ]]; then
-        LogInfo "Skipping automatic start after restore (--no-start)"
+    # No per-subdir handling; archive has been extracted.
+    # Start server and release cluster maintenance locks after readiness
+    # Use master helper to start, wait for RCON/ALLOWED_FILE, then release locks
+    master_release_after_start 900
+}
+
+
+# Check for queued requests (restore.request etc.) and apply them when appropriate
+check_requests() {
+    # Only master should apply cluster-wide restore requests
+    if [[ -z "${SLAVE_PORTS}" ]]; then
+        # single-node: allow local apply if request present
+        :
     else
-        start
+        # acting as master (has SLAVE_PORTS)
+        if [[ ! -d "$MASTER_LOCK_DIR" ]]; then
+            # If master lock not acquired yet, skip
+            return 0
+        fi
     fi
+
+    local rqf="$SIGNALS_DIR/restore.request"
+    if [[ -f "$rqf" ]]; then
+        LogInfo "Detected restore request: $rqf"
+
+        # Try to acquire a simple lock to avoid concurrent processors
+        local lockdir="${SIGNALS_DIR}/restore.lock"
+        if ! mkdir "$lockdir" 2>/dev/null; then
+            LogWarn "Another process is handling restore requests (lock present). Skipping."
+            return 0
+        fi
+
+        # Ensure we always archive a processing file on any exit (orphan protection).
+        # Use a flag `processed` to detect successful completion and only move to .failed when necessary.
+        local processed=false
+        trap 'if [[ "${processed}" != "true" ]]; then [[ -n "${procf:-}" && -f "${procf}" ]] && mv -f "${procf}" "${SIGNALS_DIR}/restore.request.failed.${ts}" 2>/dev/null || true; fi; rmdir "${lockdir}" 2>/dev/null || true' RETURN
+
+        # Move request to processing file to avoid races (atomic mv)
+        local pid ts procf
+        pid=$$
+        ts=$(date -Is 2>/dev/null || date +%s)
+        procf="${rqf}.processing.${pid}.${ts}"
+        if ! mv -f "$rqf" "$procf" 2>/dev/null; then
+            LogError "Failed to move request to processing file. Aborting."
+            rmdir "$lockdir" 2>/dev/null || true
+            return 1
+        fi
+
+        # Read archive value from processing file
+        local archive
+        archive=$(grep -m1 '^archive=' "$procf" | cut -d'=' -f2-)
+        if [[ -z "$archive" ]]; then
+            LogError "Malformed restore request: missing archive"
+            mv -f "$procf" "${procf}.failed.${ts}" 2>/dev/null || rm -f "$procf" 2>/dev/null || true
+            rmdir "$lockdir" 2>/dev/null || true
+            return 1
+        fi
+
+        LogInfo "Applying restore from: $archive"
+
+        # Apply restore (non-interactive)
+        restoreBackup --apply "$archive"
+        local res=$?
+
+        # Always move processing file to done/failed for auditability
+        if [[ $res -eq 0 ]]; then
+            LogSuccess "Restore request applied successfully"
+            processed=true
+            mv -f "$procf" "${SIGNALS_DIR}/restore.request.done.${ts}" 2>/dev/null || rm -f "$procf" 2>/dev/null || true
+            # cleanup trap will rmdir lockdir on EXIT
+            return 0
+        else
+            LogError "Restore request failed (code $res). Moving request to failed file for inspection."
+            processed=true
+            mv -f "$procf" "${SIGNALS_DIR}/restore.request.failed.${ts}" 2>/dev/null || true
+            # cleanup trap will rmdir lockdir on EXIT
+            return $res
+        fi
+    fi
+    return 0
 }
 
 # Main function
@@ -951,9 +906,6 @@ main() {
         "update") 
             update "${@:2}"
             ;;
-        "check_maintenance")
-            check_maintenance
-            ;;
         "backup")
             backup
             ;;
@@ -967,14 +919,16 @@ main() {
     esac
 }
 
-# Check if at least one argument is provided
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <action> [options]"
-    echo "  update options: --no-warn"
-    echo "  stop/restart options: --saveworld"
-    echo "  restore options: --no-cluster --no-mod --no-config --map-only"
-    echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance."
-    exit 1
-fi
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    # Called directly: run CLI main
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: $0 <action> [options]"
+        echo "  update options: --no-warn"
+        echo "  stop/restart options: --saveworld"
+        echo "  restore usage: restore [archive]"
+        echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore."
+        exit 1
+    fi
 
-main "$@"
+    main "$@"
+fi

@@ -123,25 +123,42 @@
   - build ... docker build
   - push ... docker push
 
-## バックアップ／復元の変更（サーバー単体の限定バックアップ）
+## バックアップ／復元の変更（クラスター単位のバックアップ）
 
-このフォークでは、クラスタとして複数マップの一括保存をサポートしていません。
+このフォークでは、クラスタとしての一括保存のみサポートしています。
 
 バックアップは `/opt/arkserver/ShooterGame/Saved` の以下のサブパスのみを含みます。
 
-1. `Saved/SavedArks/${SERVER_MAP}` — マップ／トライブ／プレイヤーのセーブ（ただし `*.profilebak`, `*.tribebak`, `${SERVER_MAP}_*.ark` は除外）
+1. `Saved/SavedArks — マップ／トライブ／プレイヤーのセーブ（ただし `*.profilebak`, `*.tribebak`, `${SERVER_MAP}_*.ark` は除外）
 2. `Saved/SaveGames` — MOD のセーブデータ
 3. `Saved/Config/WindowsServer` — `Game.ini`, `GameUserSettings.ini`, `Engine.ini` 等の設定
 4. `Saved/Cluster/clusters/${CLUSTER_ID}` — クラスタメタデータ
 
 該当ディレクトリが存在しない場合は無視されます。
 
-復元には以下のオプションを追加しました。
+## クラスタ同期処理について。（メンテナンス／復元フローの一般化）
 
-- `--no-cluster` — クラスタデータを復元しない
-- `--no-mod` — MOD の `SaveGames` を復元しない
-- `--no-config` — `Config/WindowsServer` を復元しない
-- `--map-only` — 省略形。`--no-cluster --no-mod --no-config` と同等
-- `--no-start` — 復元後に自動でサーバーを起動しない
+以下はこのリポジトリで追加・改善した運用ロジックの要点です（マスター/スレーブ環境での安全な更新・復元を目的とした改修）。
 
-これによりバックアップ容量を削減し、単体ノードでの復元が容易になります。詳細は `manager restore --help` を参照してください。
+- `scripts/manager/helper.sh` にメンテナンス操作の共通ヘルパーを追加しました。
+  - `enter_maintenance`, `exit_maintenance`, `with_maintenance` などで、クラスター単位の停止・作業・再開処理を再利用できます。
+- `manager.sh` の `start()` を少し改良し、RCON 待ちのログがコンテナ PID1 に届くようバックグラウンド待機を調整しました（`rcon_wait_ready` の出力が docker logs に反映される改善）。
+- 復元フローを「リクエスト駆動」に変更しました:
+  - `manager restore --request <archive>` で `/opt/arkserver/.signals/restore.request` を作成（重複リクエストは拒否）。
+  - コンテナ PID1 側のモニタが `check_requests()` を実行して `.request` を `.processing` に移動し、`restore --apply <archive>` を呼んで実際の復元を行います。
+  - 処理完了後に `.done` または `.failed` に移動してアーカイブします（途中でプロセスが落ちても残らないようトラップで保護）。
+
+これにより、対話実行した際に exec-tty にしか出力されず docker logs に入らない、という問題を解消し、マスター側でログがまとまって出力されるようになりました。
+
+運用メモ:
+- 既存の `restore.request` は自動的にアーカイブされ `.done`/.`failed` に移されます。手動での介入は不要ですが、監査のため `/opt/arkserver/.signals` を確認できます。
+
+### 追加の堅牢性改善（2026-02-10）
+
+- `manager.sh` の `check_requests()` 処理に対して、処理中ファイルが残らないような保護を追加しました。
+  - `.request` を `.processing.<pid>.<ts>` に原子的に移動して適用し、成功時は `.done.<ts>`、失敗や予期せぬ終了時は `.failed.<ts>` に移動します。
+  - さらに、途中でプロセスが落ちても `.processing` が残らないように `trap` を用いたクリーンアップを追加しました。
+  - これにより、復元リクエスト処理の可観測性と信頼性が向上し、PID1 側でログが一貫して `docker logs` に流れるようになっています。
+
+この変更はメンテナンス/復元フローの安定性を高めることを目的としています。
+

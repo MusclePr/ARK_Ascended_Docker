@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
 mkdir -p "$SIGNALS_DIR"
@@ -148,10 +149,19 @@ manager start &
 (
     LogInfo "Starting background signal monitor loop (5s interval)"
     while true; do
-        if [[ "${AUTO_UPDATE_ENABLED,,}" != "true" ]]; then
-            manager check_maintenance || true
+        if [[ "$is_master" == false ]]; then
+            # Call internal maintenance checker by sourcing manager functions (no CLI exposure)
+            if ! declare -f check_maintenance >/dev/null 2>&1; then
+                source "/opt/manager/manager.sh" >/dev/null 2>&1 || true
+            fi
+            check_maintenance || true
+        else
+            # Master should also check for queued requests (restore.request)
+            if ! declare -f check_requests >/dev/null 2>&1; then
+                source "/opt/manager/manager.sh" >/dev/null 2>&1 || true
+            fi
+            check_requests || true
         fi
-        manager check_signals || true
         sleep 5
     done
 ) &

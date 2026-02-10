@@ -1,3 +1,4 @@
+#!/bin/bash
 #
 # Log Definitions
 #
@@ -11,7 +12,7 @@ export GreenBoldText='\033[1;32m'       # Green
 export YellowBoldText='\033[1;33m'      # Yellow
 export CyanBoldText='\033[1;36m'        # Cyan
 
-export LOG_PATH="${LOG_DIR}/${LOG_FILE}"
+export LOG_PATH="${LOG_DIR}/${LOG_FILE:-ShooterGame.log}"
 
 # Cluster signals common definitions
 export SIGNALS_DIR="/opt/arkserver/.signals"
@@ -23,8 +24,6 @@ export MASTER_LOCK_DIR="${SIGNALS_DIR}/master.lock"
 export MASTER_LOCK_OWNER_FILE="${MASTER_LOCK_DIR}/owner"
 export UPDATING_FLAG="${SIGNALS_DIR}/updating.lock"
 export RESUME_FLAG="${SIGNALS_DIR}/autoresume_${SERVER_PORT}.flag"
-export SAVE_REQUEST_FILE="${SIGNALS_DIR}/save.request"
-export SAVE_ACK_FILE="${SIGNALS_DIR}/save.ack_${SERVER_PORT}"
 export STATUS_FILE="${SIGNALS_DIR}/status_${SERVER_PORT}"
 
 LogInfo() {
@@ -76,7 +75,7 @@ SelectArchive() {
     set -e
     path=$1
     select fname in $path/*; do
-        echo $fname
+        echo "$fname"
         break;
     done
     if [[ $REPLY == "" ]]; then
@@ -154,61 +153,104 @@ wait_for_slave_acks() {
     return 0
 }
 
-wait_for_save_acks() {
-    local start_epoch="$1"
 
-    if [[ -z "${SLAVE_PORTS:-}" ]]; then
-        return 0
-    fi
-
-    local -a ports
-    IFS=',' read -r -a ports <<< "${SLAVE_PORTS}" || true
-
-    local -a targets
-    local p
-    for p in "${ports[@]}"; do
-        p="${p//[[:space:]]/}"
-        [[ -z "$p" ]] && continue
-        [[ "$p" == "${SERVER_PORT}" ]] && continue
-        targets+=("$p")
+# Enter maintenance mode: request cluster maintenance and (optionally) wait for slaves to ACK
+# Usage: enter_maintenance [--no-wait] [<start_epoch>]
+enter_maintenance() {
+    local no_wait=false
+    local start_epoch
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-wait)
+                no_wait=true
+                ;;
+            *)
+                start_epoch="$1"
+                ;;
+        esac
+        shift
     done
 
-    if [[ ${#targets[@]} -eq 0 ]]; then
-        return 0
+    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
+    LogInfo "Requesting Cluster Maintenance..."
+    # Remove any previous ALLOWED_FILE to avoid immediate resume from stale state
+    rm -f "$ALLOWED_FILE" 2>/dev/null || true
+    touch "$REQUEST_FILE" 2>/dev/null || true
+
+    LogInfo "Initiating Cluster Maintenance..."
+    touch "$LOCK_FILE" 2>/dev/null || true
+
+    if [[ "$no_wait" == false ]]; then
+        if [[ -z "$start_epoch" ]]; then
+            start_epoch=$(date +%s)
+        fi
+        wait_for_slave_acks "$start_epoch"
+    else
+        LogInfo "Skipping wait for slave ACKs (--no-wait)"
     fi
+}
 
-    LogInfo "Waiting up to 60s for other nodes to save world: ${targets[*]}"
 
-    local all_ack=false
-    local -a missing
-    while true; do
-        local now_epoch
-        now_epoch=$(date +%s)
+# Exit maintenance mode: remove maintenance locks and flags
+# Does NOT create ALLOWED_FILE; that file is created by the master when RCON is ready
+exit_maintenance() {
+    LogInfo "Releasing cluster maintenance locks..."
+    rm -f "$UPDATING_FLAG" 2>/dev/null || true
+    rm -f "$LOCK_FILE" 2>/dev/null || true
+    rm -f "$REQUEST_FILE" 2>/dev/null || true
+    rm -f "$WAITING_FILE" 2>/dev/null || true
+}
 
-        if (( now_epoch - start_epoch >= 60 )); then
-            break
-        fi
 
-        all_ack=true
-        missing=()
-
-        for p in "${targets[@]}"; do
-            if [[ ! -f "${SIGNALS_DIR}/save.ack_${p}" ]]; then
-                all_ack=false
-                missing+=("$p")
-            fi
-        done
-
-        if [[ "$all_ack" == true ]]; then
-            LogInfo "All nodes finished saving."
-            return 0
-        fi
-
-        sleep 2
-    done
-
-    LogWarn "Timed out waiting for save ACKs. Proceeding without: ${missing[*]:-unknown}"
+# Convenience wrapper: run an action while in maintenance mode.
+# Usage: with_maintenance <command...>
+# Behavior: enters maintenance, runs the command, on success exits maintenance.
+# On failure, it keeps the locks in place for manual intervention and returns non-zero.
+with_maintenance() {
+    if [[ $# -eq 0 ]]; then
+        LogError "with_maintenance: no command provided"
+        return 2
+    fi
+    local cmd
+    cmd="$*"
+    enter_maintenance
+    if ! bash -c "$cmd"; then
+        LogError "Command inside maintenance failed: $cmd"
+        LogError "Keeping maintenance locks for manual inspection."
+        return 1
+    fi
+    exit_maintenance
     return 0
 }
 
+
+# Master release helper: start master, wait for RCON readiness (ALLOWED_FILE), then exit maintenance
+# Usage: master_release_after_start [wait_timeout_seconds]
+master_release_after_start() {
+    local wait_timeout=${1:-900}
+
+    LogInfo "Master releasing: starting server and waiting for cluster readiness (timeout ${wait_timeout}s)"
+    start
+
+    if [[ -n "${SLAVE_PORTS}" ]]; then
+        local waited=0
+        local wait_interval=5
+        LogInfo "Waiting for cluster allowed signal (ALLOWED_FILE)..."
+        while [ $waited -lt $wait_timeout ]; do
+            if [[ -f "$ALLOWED_FILE" ]]; then
+                LogSuccess "ALLOWED_FILE detected. Proceeding to release maintenance locks."
+                break
+            fi
+            sleep $wait_interval
+            waited=$((waited + wait_interval))
+        done
+        if [[ ! -f "$ALLOWED_FILE" ]]; then
+            LogWarn "Timeout waiting for ALLOWED_FILE (${wait_timeout}s). Proceeding to release locks to avoid prolonged downtime."
+        fi
+    else
+        LogInfo "Single-node mode or no SLAVE_PORTS configured; skipping ALLOWED_FILE wait."
+    fi
+
+    exit_maintenance
+}
 

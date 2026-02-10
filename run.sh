@@ -60,7 +60,10 @@ case "$1" in
         docker buildx build --platform linux/amd64,linux/arm64 -t "$TAG" --push .
         clean_docker_buildx
         ;;
+    shellcheck)
+        shellcheck -x ./scripts/**/*.sh
+        ;;
     *)
-        echo "Usage: $(basename $0) {up|down|build|push}"
+        echo "Usage: $(basename $0) {up|down|build|push|shellcheck}"
         exit 1
 esac
