@@ -1,6 +1,7 @@
 #!/bin/bash
-RCON_CMDLINE=( rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} )
+RCON_CMDLINE=( rcon -a "127.0.0.1:${RCON_PORT}" -p "${ARK_ADMIN_PASSWORD}" )
 EOS_FILE=/opt/manager/.eos.config
+# shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
 MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
@@ -11,7 +12,7 @@ get_pid() {
     if [[ -z $pid ]]; then
         return 1
     fi
-    echo $pid
+    echo "$pid"
     return 0
 }
 
@@ -35,7 +36,7 @@ custom_rcon() {
     if ! get_health >/dev/null ; then
         return 1
     fi
-    echo $(${RCON_CMDLINE[@]} "${@}" 2>/dev/null)
+    "${RCON_CMDLINE[@]}" "${@}" 2>/dev/null
     return 0
 }
 full_status_setup() {
@@ -75,8 +76,8 @@ full_status_first_run() {
 }
 
 full_status_display() {
-    creds=$(cat "$EOS_FILE" | cut -d, -f1)
-    id=$(cat "$EOS_FILE" | cut -d, -f2)
+    creds=$(cut -d, -f1 "$EOS_FILE")
+    id=$(cut -d, -f2 "$EOS_FILE")
 
     # Recover current ip
     ip=$(curl -s https://ifconfig.me/ip)
@@ -127,15 +128,15 @@ full_status_display() {
     max_players=${vars[1]}
     serv_name=${vars[2]}
     day=${vars[3]}
-    battleye=${vars[4]}
+    #battleye=${vars[4]}
     ip=${vars[5]}
     bind=${vars[6]}
     map=${vars[7]}
     major=${vars[8]}
     minor=${vars[9]}
-    pve=${vars[10]}
+    #pve=${vars[10]}
     mods=${vars[11]}
-    bind_ip=${bind%:*}
+    #bind_ip=${bind%:*}
     bind_port=${bind#*:}
 
     if [[ "${mods}" == "null" ]]; then
@@ -182,7 +183,7 @@ status() {
 
     # Check initial status with rcon command
     if health=$(get_health); then
-        out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null)
+        out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
         res=$?
         if [[ $res == 0 ]]; then
             # Once rcon is up, query EOS if requested
@@ -213,7 +214,7 @@ rcon_wait_ready() {
     local interval=10
     
     while [ $elapsed -lt $timeout ]; do
-        if out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null); then
+        if out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null); then
             LogSuccess "Server RCON is responsive."
             set_server_status "RUNNING"
             if [[ -n "${SLAVE_PORTS}" ]]; then
@@ -268,26 +269,27 @@ stop() {
 
     # Countdown if players are present
     local out
-    out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null)
+    out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
     local res=$?
+    local -i num_players start_t now elapsed target_elapsed
     if [[ $res == 0 && "$out" != "No Players"* ]]; then
-        local num_players=$(echo "$out" | wc -l)
+        num_players=$(echo "$out" | wc -l)
         if [[ $num_players -gt 0 ]]; then
             LogInfo "Players connected: ${num_players}. Starting 60s countdown."
             local intervals=(60 45 30 20 15 10 9 8 7 6 5 4 3 2 1)
-            local start_t=$(date +%s)
+            start_t=$(date +%s)
             for t in "${intervals[@]}"; do
                 # Wait until target time to broadcast
-                local target_elapsed=$((60 - t))
+                target_elapsed=$((60 - t))
                 while true; do
-                    local now=$(date +%s)
-                    local elapsed=$((now - start_t))
+                    now=$(date +%s)
+                    elapsed=$((now - start_t))
                     if [[ $elapsed -ge $target_elapsed ]]; then
                         break
                     fi
                     sleep 1
                     # Re-check players every second
-                    out=$(${RCON_CMDLINE[@]} ListPlayers 2>/dev/null)
+                    out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
                     if [[ $? != 0 || "$out" == "No Players"* ]]; then
                          LogInfo "All players logged out. Proceeding to stop."
                          break 2
@@ -297,9 +299,9 @@ stop() {
                 # Send broadcast
                 local msg
                 if [[ $t -gt 10 ]]; then
-                    msg=$(printf "$MSG_MAINTENANCE_COUNTDOWN" "$t")
+                    msg="${MSG_MAINTENANCE_COUNTDOWN//%d/$t}"
                 else
-                    msg=$(printf "$MSG_MAINTENANCE_COUNTDOWN_SOON" "$t")
+                    msg="${MSG_MAINTENANCE_COUNTDOWN_SOON//%d/$t}"
                 fi
                 custom_rcon "serverchat $msg"
             done
@@ -317,7 +319,7 @@ stop() {
     set_server_status "STOPPING"
 
     # Check number of players
-    out=$(${RCON_CMDLINE[@]} DoExit 2>/dev/null)
+    out=$("${RCON_CMDLINE[@]}" DoExit 2>/dev/null)
     res=$?
     force=false
     if [[ $res == 0  && "$out" == "Exiting..." ]]; then
@@ -326,7 +328,7 @@ stop() {
             LogError "Server already down. This should not happen!"
             exit 1
         fi
-        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$(get_pid) -f /dev/null
+        timeout "$SERVER_SHUTDOWN_TIMEOUT" tail --pid="$(get_pid)" -f /dev/null
         res=$?
 
         # Timeout occurred
@@ -343,16 +345,17 @@ stop() {
         DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_FORCE_SHUTDOWN" "failure"
         LogWarn "Forcing server shutdown"
         if get_pid; then
-            kill -INT $(get_pid)
+            kill -INT "$(get_pid)"
         else
             LogError "Tried to kill server, but server is not running!"
             exit 1
         fi
-        timeout $SERVER_SHUTDOWN_TIMEOUT tail --pid=$(get_pid) -f /dev/null
+        timeout "$SERVER_SHUTDOWN_TIMEOUT" tail --pid="$(get_pid)" -f /dev/null
         res=$?
         # Timeout occurred
         if [[ "$res" == 124 ]]; then
-            kill -9 $(get_pid)
+            kill -9 "$(get_pid)"
+            LogWarn "TIMEOUT: Server did not stop after SIGINT, sent SIGKILL"
         fi
     fi
 
@@ -365,7 +368,7 @@ stop() {
 restart() {
     DISCORD_MSG_RESTARTING="${DISCORD_MSG_RESTARTING:-Restarting the Server}"
     DiscordMessage "Restart $SESSION_NAME" "$DISCORD_MSG_RESTARTING" "in-progress"
-    LogAction "RESTARTING SERVER"
+    LogAction "RESTARTING SERVER" >> "$LOG_PATH"
     stop "$1"
     start
 }
@@ -388,33 +391,6 @@ saveworld() {
     # sleep is nessecary because the server seems to write save files after the saveworld function ends.
     sleep 5
 }
-
-check_signals() {
-    # Check for save request
-    if [[ -f "${SAVE_REQUEST_FILE}" ]]; then
-        if [[ ! -f "${SAVE_ACK_FILE}" ]]; then
-            # Ensure signals dir exists for us to write ACK
-            mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
-            LogInfo "Save request detected. Saving world..."
-            set_server_status "BACKUP_SAVE"
-            saveworld
-            touch "${SAVE_ACK_FILE}"
-        fi
-    else
-        # Remove our ACK if no request is active
-        if [[ -f "${SAVE_ACK_FILE}" ]]; then
-            rm -f "${SAVE_ACK_FILE}" 2>/dev/null || true
-            if get_health >/dev/null; then
-                # If RCON was up, we might be back to running. 
-                # But we don't know for sure if it's fully 'RUNNING' without checking RCON.
-                # For now, let's just reset to a generic 'RUNNING' or let the next RCON success set it.
-                # Actually, if we just finished backup save, we should go back to RUNNING.
-                set_server_status "RUNNING"
-            fi
-        fi
-    fi
-}
-
 
 # Returns 0 if Update Required
 # Returns 1 if Update NOT Required
@@ -463,7 +439,7 @@ update_required() {
   fi
 
   # Parse temp file for manifest id
-  LATEST_MANIFEST=$(jq '.data."'"$ASA_APPID"'".depots."'"$(($ASA_APPID + 1))"'".manifests.public.gid' <"$temp_file" | sed -r 's/.*("[0-9]+")$/\1/' | tr -d '"')
+  LATEST_MANIFEST=$(jq '.data."'"$ASA_APPID"'".depots."'"$((ASA_APPID + 1))"'".manifests.public.gid' <"$temp_file" | sed -r 's/.*("[0-9]+")$/\1/' | tr -d '"')
   rm "$temp_file"
 
   if [ -z "$LATEST_MANIFEST" ]; then
@@ -523,8 +499,9 @@ update() {
     # This prevents slaves from starting while we are checking/updating shared volumes.
     rm -f "$ALLOWED_FILE" 2>/dev/null || true
 
+    local update_rc=0
     update_required
-    local update_rc=$?
+    update_rc=$?
     if [[ "$update_rc" == 1 ]]; then
         LogSuccess "The server is up to date!"
         return 0
@@ -563,7 +540,7 @@ update() {
     stop --saveworld
 
     touch "$UPDATING_FLAG"
-    rm "/opt/arkserver/steamapps/appmanifest_$ASA_APPID.acf"
+    rm "/opt/arkserver/steamapps/appmanifest_${ASA_APPID}.acf"
     local steamcmd_rc=0
     local steamcmd_log
     steamcmd_log=$(mktemp)
@@ -581,7 +558,7 @@ update() {
         LogInfo "Running SteamCMD update (attempt ${attempt}/${max_retries})"
 
         set -o pipefail
-        /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update ${ASA_APPID} validate +quit 2>&1 | tee "$steamcmd_log"
+        /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update "${ASA_APPID}" validate +quit 2>&1 | tee "$steamcmd_log"
         steamcmd_rc=${PIPESTATUS[0]}
         set +o pipefail
 
@@ -613,7 +590,7 @@ update() {
         rm -f "$UPDATING_FLAG" 2>/dev/null || true
         LogError "Update failed after ${max_retries} attempts (last steamcmd exit code: ${steamcmd_rc}). Keeping cluster maintenance lock; server will remain stopped."
         DiscordMessage "Update" "Update failed after ${max_retries} attempts (steamcmd exit code: ${steamcmd_rc}). Server will remain stopped." "failure"
-        return $steamcmd_rc
+        return "$steamcmd_rc"
     fi
 
     # Remove unnecessary files (saves 6.4GB.., that will be re-downloaded next update)
@@ -621,7 +598,36 @@ update() {
         rm -rf /opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb
         rm -rf /opt/arkserver/ShooterGame/Content/Movies/
     fi
+    # If we are skipping start (or dry-run), do not attempt to start/wait for RCON here.
+    if [[ "$skip_start" != true ]]; then
+        LogInfo "Starting server after update"
+        start
 
+        # If this is a clustered setup, wait for the master to signal readiness
+        # by creating the ALLOWED_FILE. rcon_wait_ready creates that file when RCON
+        # responds. We poll with a timeout to avoid deadlocks.
+        if [[ -n "${SLAVE_PORTS}" ]]; then
+            local wait_timeout=900 # 15 minutes
+            local waited=0
+            local wait_interval=5
+            LogInfo "Waiting for cluster allowed signal (ALLOWED_FILE)..."
+            while [ $waited -lt $wait_timeout ]; do
+                if [[ -f "$ALLOWED_FILE" ]]; then
+                    LogSuccess "ALLOWED_FILE detected. Releasing cluster locks."
+                    break
+                fi
+                sleep $wait_interval
+                waited=$((waited + wait_interval))
+            done
+            if [[ ! -f "$ALLOWED_FILE" ]]; then
+                LogWarn "Timeout waiting for ALLOWED_FILE (${wait_timeout}s). Releasing locks anyway to avoid prolonged downtime."
+            fi
+        fi
+    else
+        LogInfo "Skipping automatic start/wait (skip_start=${skip_start})"
+    fi
+
+    # Final cleanup: remove updating flag and release cluster maintenance locks
     rm -f "$UPDATING_FLAG"
     rm -f "$LOCK_FILE"
     rm -f "$REQUEST_FILE"
@@ -629,22 +635,23 @@ update() {
     trap - EXIT
 
     LogSuccess "Update completed"
-    [ "$skip_start" != true ] && start
 }
 
 backup(){
-    path="/var/backups"
-    tmp_path="/opt/arkserver/tmp/backup"
+    local path="/var/backups"
+    local tmp_path="/opt/arkserver/tmp/backup"
 
     LogInfo "Creating backup. Backups are saved in your backup volume."
     set_server_status "BACKUP_SAVE"
 
     saveworld
 
-    mkdir -p $path
-    mkdir -p $tmp_path
+    mkdir -p "$path"
+    mkdir -p "$tmp_path"
 
-    archive_name="$(sanitize "$SESSION_NAME")_$(date +"%Y-%m-%d_%H-%M")"
+    local label
+    label="$(sanitize "$SESSION_NAME")"
+    archive_name="${label}_$(date +"%Y-%m-%d_%H-%M")"
 
     # copy selected subpaths into temporary dir so tar doesn't get write-on-read failures
     LogInfo "Copying selected Saved subpaths"
@@ -683,10 +690,10 @@ backup(){
     LogInfo "Creating archive"
     tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
     if [[ $? == 1 ]]; then
-        LogError "Creating backup failed" >> $LOG_PATH
+        LogError "Creating backup failed" >> "$LOG_PATH"
         return 1
     fi
-    LogSuccess "Backup created" >> $LOG_PATH
+    LogSuccess "Backup created" >> "$LOG_PATH"
 
     # Clean up Files
     rm -R "$tmp_path"
@@ -736,7 +743,9 @@ restoreBackup(){
             return 1
         fi
     else
-        local backup_count=$(ls "$backup_path" 2>/dev/null | wc -l)
+        local -i backup_count
+        # Use find to count files to handle arbitrary filenames safely (SC2012)
+        backup_count=$(find "$backup_path" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l)
         if [[ $backup_count -eq 0 ]]; then
             LogError "You haven't created any backups yet."
             return 1
@@ -756,7 +765,7 @@ restoreBackup(){
     LogInfo "Stopping local server..."
     # Call stop in a subshell so any `exit` in stop() won't kill this script
     ( stop )
-    stop_rc=$?
+    #stop_rc=$?
 
     # Wait for server to actually stop (timeout 60s)
     local waited=0
@@ -810,8 +819,7 @@ restoreBackup(){
     fi
 
     # Extract to temporary dir, then move into place
-    tar -xzf "$archive" -C "$tmp_restore"
-    if [[ $? -ne 0 ]]; then
+    if ! tar -xzf "$archive" -C "$tmp_restore"; then
         LogError "Tar extraction failed"
         # Rollback map-specific backup if present
         if [[ -n "$saved_map_old" ]]; then
@@ -946,9 +954,6 @@ main() {
         "check_maintenance")
             check_maintenance
             ;;
-        "check_signals")
-            check_signals
-            ;;
         "backup")
             backup
             ;;
@@ -956,7 +961,7 @@ main() {
             restoreBackup "${@:2}"
             ;;
         *)
-            LogError "Invalid action. Supported actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance, check_signals."
+            LogError "Invalid action. Supported actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance."
             exit 1
             ;;
     esac
@@ -968,7 +973,7 @@ if [[ $# -lt 1 ]]; then
     echo "  update options: --no-warn"
     echo "  stop/restart options: --saveworld"
     echo "  restore options: --no-cluster --no-mod --no-config --map-only"
-    echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance, check_signals."
+    echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore, check_maintenance."
     exit 1
 fi
 
