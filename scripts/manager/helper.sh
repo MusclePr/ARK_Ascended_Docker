@@ -156,6 +156,7 @@ wait_for_slave_acks() {
 
 # Enter maintenance mode: request cluster maintenance and (optionally) wait for slaves to ACK
 # Usage: enter_maintenance [--no-wait] [<start_epoch>]
+# shellcheck disable=SC2120
 enter_maintenance() {
     local no_wait=false
     local start_epoch
@@ -213,7 +214,7 @@ with_maintenance() {
     fi
     local cmd
     cmd="$*"
-    enter_maintenance
+    enter_maintenance "$@"
     if ! bash -c "$cmd"; then
         LogError "Command inside maintenance failed: $cmd"
         LogError "Keeping maintenance locks for manual inspection."
@@ -236,7 +237,7 @@ master_release_after_start() {
         local waited=0
         local wait_interval=5
         LogInfo "Waiting for cluster allowed signal (ALLOWED_FILE)..."
-        while [ $waited -lt $wait_timeout ]; do
+        while [ "$waited" -lt "$wait_timeout" ]; do
             if [[ -f "$ALLOWED_FILE" ]]; then
                 LogSuccess "ALLOWED_FILE detected. Proceeding to release maintenance locks."
                 break
