@@ -18,6 +18,7 @@ fi
 on_shutdown_signal() {
     LogWarn "Received shutdown signal. Exiting..."
     # Kill background monitor and cron if they are running
+    [[ -n "$REQUEST_WORKER_PID" ]] && kill "$REQUEST_WORKER_PID" 2>/dev/null || true
     [[ -n "$MONITOR_PID" ]] && kill "$MONITOR_PID" 2>/dev/null || true
     [[ -n "$CRON_PID" ]] && kill "$CRON_PID" 2>/dev/null || true
     manager stop --saveworld || true
@@ -145,27 +146,56 @@ mkdir -p "${LOG_PATH%/*}" && echo "" > "${LOG_PATH}"
 # Start server through manager
 manager start &
 
-# Background loop for high-frequency signal monitoring (Maintenance, Save requests, etc.)
-(
-    LogInfo "Starting background signal monitor loop (5s interval)"
-    while true; do
-        if [[ "$is_master" == false ]]; then
-            # Call internal maintenance checker by sourcing manager functions (no CLI exposure)
-            if ! declare -f check_maintenance >/dev/null 2>&1; then
-                source "/opt/manager/manager.sh" >/dev/null 2>&1 || true
+# Returns 0 if Update Required
+# Returns 1 if Update NOT Required
+# Returns 2 if Check Failed
+check_maintenance() {
+    local rcon_listening=false
+    if ss -ltn 2>/dev/null | grep -qE "[:\[]${RCON_PORT}\b"; then
+        rcon_listening=true
+    fi
+
+    if [[ -f "$LOCK_FILE" || -f "$REQUEST_FILE" ]]; then
+        # Mark that this server is waiting for maintenance and stop safely
+        touch "$WAITING_FILE"
+        set_server_status "MAINTENANCE"
+        if get_health >/dev/null; then
+            if [[ "$rcon_listening" == true ]]; then
+                LogWarn "Cluster maintenance detected. Stopping server..."
+                touch "$RESUME_FLAG"
+                stop --saveworld
+            else
+                LogInfo "Cluster maintenance detected, but RCON is not listening yet. Skip stop --saveworld."
             fi
-            check_maintenance || true
-        else
-            # Master should also check for queued requests (restore.request)
-            if ! declare -f check_requests >/dev/null 2>&1; then
-                source "/opt/manager/manager.sh" >/dev/null 2>&1 || true
-            fi
-            check_requests || true
         fi
-        sleep 5
-    done
-) &
-MONITOR_PID=$!
+    else
+        rm -f "$WAITING_FILE" 2>/dev/null || true
+        if [[ -f "$RESUME_FLAG" ]]; then
+            LogInfo "Maintenance finished. Resuming server..."
+            rm -f "$RESUME_FLAG"
+            start
+        fi
+    fi
+}
+
+if [[ "$is_master" == false ]]; then
+    (
+        while true; do
+            check_maintenance || true
+            sleep "${POLL_INTERVAL:-5}"
+        done
+    ) &
+    MONITOR_PID=$!
+fi
+
+# Start request worker to handle unified JSON requests (if present)
+if [[ -x "/opt/manager/request_worker.sh" ]]; then
+    /opt/manager/request_worker.sh &
+    REQUEST_WORKER_PID=$!
+    LogInfo "Started request_worker (pid=${REQUEST_WORKER_PID})"
+fi
+
+
 
 # Function to process log lines for Discord notifications
 process_log_line() {

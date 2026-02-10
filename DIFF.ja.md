@@ -152,14 +152,9 @@
 これにより、対話実行した際に exec-tty にしか出力されず docker logs に入らない、という問題を解消し、マスター側でログがまとまって出力されるようになりました。
 
 運用メモ:
-- 既存の `restore.request` は自動的にアーカイブされ `.done`/.`failed` に移されます。手動での介入は不要ですが、監査のため `/opt/arkserver/.signals` を確認できます。
+- 旧来の key/value リクエストは廃止され、JSON ベースの単一リクエストファイル形式に統一しました。
+  例: `/opt/arkserver/.signals/request.json` を使用します（アクションは JSON の `action` フィールドで指定）。
 
-### 追加の堅牢性改善（2026-02-10）
+- 新しいリクエストファイルは処理中に `.processing.<pid>.<ts>.json` に移動され、完了/失敗時は `.done.<ts>.json` / `.failed.<ts>.json` にリネームされます。監査は `/opt/arkserver/.signals` を参照してください。
 
-- `manager.sh` の `check_requests()` 処理に対して、処理中ファイルが残らないような保護を追加しました。
-  - `.request` を `.processing.<pid>.<ts>` に原子的に移動して適用し、成功時は `.done.<ts>`、失敗や予期せぬ終了時は `.failed.<ts>` に移動します。
-  - さらに、途中でプロセスが落ちても `.processing` が残らないように `trap` を用いたクリーンアップを追加しました。
-  - これにより、復元リクエスト処理の可観測性と信頼性が向上し、PID1 側でログが一貫して `docker logs` に流れるようになっています。
-
-この変更はメンテナンス/復元フローの安定性を高めることを目的としています。
 
