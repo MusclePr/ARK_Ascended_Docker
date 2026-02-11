@@ -187,7 +187,7 @@ rcon_wait_ready() {
         if out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null); then
             LogSuccess "Server RCON is responsive."
             set_server_status "RUNNING"
-            if [[ -n "${SLAVE_PORTS}" ]]; then
+            if [ "${CLUSTER_MASTER,,}" == "true" ]; then
                 LogInfo "Signaling ready to cluster."
                 touch "$ALLOWED_FILE" 2>/dev/null || true
             fi
@@ -201,7 +201,7 @@ rcon_wait_ready() {
     done
     
     LogWarn "RCON wait timed out (${timeout}s)."
-    if [[ -n "${SLAVE_PORTS}" ]]; then
+    if [ "${CLUSTER_MASTER,,}" == "true" ]; then
         LogWarn "Signaling ready anyway to prevent deadlock."
         touch "$ALLOWED_FILE" 2>/dev/null || true
     fi
@@ -211,9 +211,6 @@ rcon_wait_ready() {
 start() {
     if get_health >/dev/null; then
         LogInfo "Server is already running."
-        if [[ -n "${SLAVE_PORTS}" ]]; then
-            touch "$ALLOWED_FILE" 2>/dev/null || true
-        fi
         set_server_status "RUNNING"
         return 0
     fi
@@ -233,8 +230,8 @@ start() {
 
 stop() {
     if ! get_health >/dev/null ; then
-        LogError "Server is not running"
-        return 1
+        LogError "Server is already stopped."
+        return 0
     fi
 
     # Countdown if players are present
@@ -287,6 +284,7 @@ stop() {
     DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_STOPPING" "in-progress"
     LogAction "STOPPING SERVER" >> "$LOG_PATH"
     set_server_status "STOPPING"
+    rm -f "$ALLOWED_FILE" 2>/dev/null || true
 
     # Check number of players
     out=$("${RCON_CMDLINE[@]}" DoExit 2>/dev/null)
@@ -294,7 +292,7 @@ stop() {
     force=false
     if [[ $res == 0  && "$out" == "Exiting..." ]]; then
         LogInfo "Waiting ${SERVER_SHUTDOWN_TIMEOUT}s for the server to stop"
-        if ! get_pid;then
+        if ! get_pid > /dev/null; then
             LogError "Server already down. This should not happen!"
             exit 1
         fi
@@ -401,14 +399,10 @@ update_required() {
 }
 
 update() {
-    local skip_warn=false
     local skip_start=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --no-warn)
-                skip_warn=true
-                ;;
-            --no-restart)
+            --no-start)
                 skip_start=true
                 ;;
         esac
@@ -430,15 +424,6 @@ update() {
         LogWarn "Unable to check for updates. Proceeding without updating."
         return 0
     fi
-    if [[ "$skip_warn" == true ]]; then
-        LogInfo "Skipping update warning delay (--no-warn)"
-    elif [[ "${UPDATE_WARN_MINUTES}" =~ ^[0-9]+$ ]]; then
-        # マスターサーバーだけに通知しても仕方なく、プレイヤーが接続している全サーバーに通知する必要があります。
-        # カウントダウン通知があるので、この機能自体、削除しても良いかもしれません。
-        custom_rcon "serverchat The Server will update in ${UPDATE_WARN_MINUTES} minutes"
-        DiscordMessage "Update" "Server will update in ${UPDATE_WARN_MINUTES} minutes" "in-progress"
-        sleep $((UPDATE_WARN_MINUTES * 60))
-    fi
 
     UPDATE_KEEP_LOCK=false
 
@@ -447,7 +432,7 @@ update() {
     # Use helper to request/initiate cluster maintenance and wait for slaves
     enter_maintenance "$request_started_epoch"
 
-    trap 'if [[ "${UPDATE_KEEP_LOCK:-}" == "true" ]]; then rm -f "$UPDATING_FLAG"; else rm -f "$UPDATING_FLAG"; rm -f "$LOCK_FILE"; rm -f "$REQUEST_FILE"; fi' EXIT
+    trap 'if [[ "${UPDATE_KEEP_LOCK:-}" == "true" ]]; then rm -f "$UPDATING_FLAG"; else rm -f "$UPDATING_FLAG"; rm -f "$LOCK_FILE"; rm -f "$MAINTENANCE_REQUEST_FILE"; fi' EXIT
 
     DiscordMessage "Update" "Updating Server now" "warn"
     LogAction "UPDATING SERVER"
@@ -561,7 +546,7 @@ main() {
             ;;
         "backup")
             if [[ -x "/opt/manager/backup.sh" ]]; then
-                /opt/manager/backup.sh request
+                /opt/manager/backup.sh --request
                 exit $?
             else
                 LogError "Backup script not found: /opt/manager/backup.sh"
@@ -570,7 +555,7 @@ main() {
             ;;
         "restore")
             if [[ -x "/opt/manager/restore.sh" ]]; then
-                /opt/manager/restore.sh "${@:2}"
+                /opt/manager/restore.sh --request "${@:2}"
                 exit $?
             else
                 LogError "Restore script not found: /opt/manager/restore.sh"
@@ -588,7 +573,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     # Called directly: run CLI main
     if [[ $# -lt 1 ]]; then
         echo "Usage: $0 <action> [options]"
-        echo "  update options: --no-warn"
+        echo "  update options: --no-start"
         echo "  stop/restart options: --saveworld"
         echo "  restore usage: restore [archive]"
         echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore."

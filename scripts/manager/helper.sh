@@ -16,7 +16,7 @@ export LOG_PATH="${LOG_DIR}/${LOG_FILE:-ShooterGame.log}"
 
 # Cluster signals common definitions
 export SIGNALS_DIR="/opt/arkserver/.signals"
-export REQUEST_FILE="${SIGNALS_DIR}/update.request"
+export MAINTENANCE_REQUEST_FILE="${SIGNALS_DIR}/maintenance.request"
 export REQUEST_JSON="${SIGNALS_DIR}/request.json"
 export LOCK_FILE="${SIGNALS_DIR}/maintenance.lock"
 export WAITING_FILE="${SIGNALS_DIR}/waiting_${SERVER_PORT}.flag"
@@ -28,6 +28,11 @@ export RESUME_FLAG="${SIGNALS_DIR}/autoresume_${SERVER_PORT}.flag"
 export STATUS_FILE="${SIGNALS_DIR}/status_${SERVER_PORT}"
 
 RCON_CMDLINE=( rcon -a "127.0.0.1:${RCON_PORT}" -p "${ARK_ADMIN_PASSWORD}" )
+
+CLUSTER_MASTER="${CLUSTER_MASTER:-false}"
+if [[ -n "${SLAVE_PORTS:-}" ]]; then
+    CLUSTER_MASTER=true
+fi
 
 # JSON request helpers
 # Write JSON atomically into destination (validates JSON with jq)
@@ -72,20 +77,18 @@ create_request_json() {
 mark_request_status() {
     local reqpath="$1"
     local status="$2"
-    local ts
-    ts=$(date -Is 2>/dev/null || date +%s)
     local base
     base=$(basename "$reqpath")
     local dest
     if [[ "$status" == "done" ]]; then
-        dest="${SIGNALS_DIR}/${base}.done.${ts}.json"
+        dest="${SIGNALS_DIR}/${base%%.*}.done.json"
     else
-        dest="${SIGNALS_DIR}/${base}.failed.${ts}.json"
+        dest="${SIGNALS_DIR}/${base%%.*}.failed.json"
     fi
     mv -f "$reqpath" "$dest" 2>/dev/null || return 1
 
     # Delete files older than 7 days with .done or .failed extensions
-    find "${SIGNALS_DIR}" -maxdepth 1 -type f \( -name "*.done.*.json" -o -name "*.failed.*.json" \) -mtime +7 -delete 2>/dev/null || true
+    find "${SIGNALS_DIR}" -maxdepth 1 -type f \( -name "request.*.done.json" -o -name "request.*.failed.json" \) -mtime +7 -delete 2>/dev/null || true
 
     return 0
 }
@@ -96,6 +99,55 @@ write_response_json() {
     local dest="$1"
     local src="$2"
     json_atomic_write "$dest" "$src"
+}
+
+check_request_status() {
+    local req_id="$1"
+    local status_file
+    status_file=$(find "${SIGNALS_DIR}" -maxdepth 1 -type f -name "request-${req_id}.*.json" 2>/dev/null | head -n 1)
+    if [[ -z "$status_file" ]]; then
+        echo "pending"
+        return 0
+    fi
+    if [[ "$status_file" == *".done.json" ]]; then
+        echo "done"
+    elif [[ "$status_file" == *".failed.json" ]]; then
+        echo "failed"
+    else
+        echo "unknown"
+    fi
+    return 0
+}
+
+wait_for_response() {
+    # Wait for result
+    LogInfo "Waiting for result to be processed..."
+    local wait_interval=5 status
+    while true; do
+        sleep "$wait_interval"
+        status=$(check_request_status "$req_id")
+        case "$status" in
+            done)
+                echo "" 1>&2
+                LogSuccess "Request completed successfully!"
+                return 0
+                ;;
+            failed)
+                echo "" 1>&2
+                LogError "Request failed."
+                return 1
+                ;;
+            pending)
+                echo -n "." 1>&2
+                ;;
+            *)
+                echo "" 1>&2
+                LogInfo "Request status: $status."
+                return 2
+                ;;
+        esac
+    done
+    return 0
 }
 
 LogInfo() {
@@ -192,7 +244,7 @@ wait_for_slave_acks() {
         return 0
     fi
 
-    LogInfo "Waiting up to 70s for slave servers to ACK stop: ${targets[*]}"
+    LogInfo "Waiting up to 120s for slave servers to ACK stop: ${targets[*]}"
 
     local all_ack=false
     local -a missing
@@ -200,7 +252,7 @@ wait_for_slave_acks() {
         local now_epoch
         now_epoch=$(date +%s)
 
-        if (( now_epoch - start_epoch >= 70 )); then
+        if (( now_epoch - start_epoch >= 120 )); then
             break
         fi
 
@@ -228,13 +280,17 @@ wait_for_slave_acks() {
 
 
 # Enter maintenance mode: request cluster maintenance and (optionally) wait for slaves to ACK
-# Usage: enter_maintenance [--no-wait] [<start_epoch>]
+# Usage: enter_maintenance [stop|save] [--no-wait] [<start_epoch>]
 # shellcheck disable=SC2120
 enter_maintenance() {
+    local action="stop"
     local no_wait=false
-    local start_epoch
+    local start_epoch=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            stop|save)
+                action="$1"
+                ;;
             --no-wait)
                 no_wait=true
                 ;;
@@ -246,14 +302,17 @@ enter_maintenance() {
     done
 
     mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
-    LogInfo "Requesting Cluster Maintenance..."
+    LogInfo "Requesting Cluster Maintenance (${action})..."
     # Remove any previous ALLOWED_FILE to avoid immediate resume from stale state
     rm -f "$ALLOWED_FILE" 2>/dev/null || true
-    touch "$REQUEST_FILE" 2>/dev/null || true
+    # Remove stale waiting flags
+    rm -f "${SIGNALS_DIR}/waiting_"*.flag 2>/dev/null || true
+    
+    # content: action (atomic write)
+    local tmp_req
+    tmp_req=$(mktemp "${SIGNALS_DIR}/maintenance.request.XXXXXX") && echo "$action" > "$tmp_req" && mv -f "$tmp_req" "$MAINTENANCE_REQUEST_FILE"
 
     LogInfo "Initiating Cluster Maintenance..."
-    touch "$LOCK_FILE" 2>/dev/null || true
-
     if [[ "$no_wait" == false ]]; then
         if [[ -z "$start_epoch" ]]; then
             start_epoch=$(date +%s)
@@ -271,7 +330,7 @@ exit_maintenance() {
     LogInfo "Releasing cluster maintenance locks..."
     rm -f "$UPDATING_FLAG" 2>/dev/null || true
     rm -f "$LOCK_FILE" 2>/dev/null || true
-    rm -f "$REQUEST_FILE" 2>/dev/null || true
+    rm -f "$MAINTENANCE_REQUEST_FILE" 2>/dev/null || true
     rm -f "$WAITING_FILE" 2>/dev/null || true
 }
 
@@ -304,7 +363,7 @@ master_release_after_start() {
     local wait_timeout=${1:-900}
 
     LogInfo "Master releasing: starting server and waiting for cluster readiness (timeout ${wait_timeout}s)"
-    start
+    manager start
 
     if [[ -n "${SLAVE_PORTS}" ]]; then
         local waited=0

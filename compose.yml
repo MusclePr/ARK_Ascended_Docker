@@ -14,7 +14,8 @@ services:
       - "SERVER_PORT=${ASA0_SERVER_PORT}"
       - "QUERY_PORT=${ASA0_QUERY_PORT}"
       - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
-    # --- As asa0 is a master server, the following specific settings are required. ---
+    # --- As asa0 is a cluster master server, the following specific settings are required. ---
+      - "CLUSTER_MASTER=true"
       - "SLAVE_PORTS=${ASA_SLAVE_PORTS}"
       - "AUTO_BACKUP_ENABLED=${ASA_AUTO_BACKUP_ENABLED}"
       - "AUTO_BACKUP_CRON_EXPRESSION=${ASA_AUTO_BACKUP_CRON_EXPRESSION}"
