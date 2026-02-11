@@ -1,8 +1,12 @@
 #!/bin/bash
-RCON_CMDLINE=( rcon -a "127.0.0.1:${RCON_PORT}" -p "${ARK_ADMIN_PASSWORD}" )
-EOS_FILE=/opt/manager/.eos.config
+
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
+
+MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
+MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
+
+EOS_FILE=/opt/manager/.eos.config
 
 full_status_setup() {
     # Check PDB is still available
@@ -119,6 +123,7 @@ full_status_display() {
 }
 
 status() {
+    local enable_full_status res ark_port health out num_players
     enable_full_status=false
     # Execute initial EOS setup, true if no error
     if [[ "$1" == "--full" ]] ; then
@@ -225,9 +230,6 @@ start() {
     # Wait for RCON before signaling readiness (if master) and setting RUNNING status
     rcon_wait_ready &
 }
-
-MSG_MAINTENANCE_COUNTDOWN="${MSG_MAINTENANCE_COUNTDOWN:-Server will shut down for maintenance. Please log out safely. %d seconds left.}"
-MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
 
 stop() {
     if ! get_health >/dev/null ; then
@@ -529,8 +531,8 @@ update() {
 
 # Main function
 main() {
-    action="$1"
-    option="$2"
+    local action="$1"
+    local option="$2"
 
     case "$action" in
         "status")

@@ -25,15 +25,13 @@ function clean_docker_buildx() {
 
 case "$1" in
     down)
-        docker compose stop 2>/dev/null
+        docker compose stop 2>/dev/null &
+        docker compose logs -f
         docker compose logs > .last.log
         if [ -f .last.log ] && [ -z "$(cat .last.log)" ]; then
             rm -f .last.log
         fi
         docker compose down
-        if [ -f .last.log ]; then
-            cat .last.log
-        fi
         exit 0
         ;;
     build)

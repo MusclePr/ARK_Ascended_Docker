@@ -28,6 +28,7 @@ ARG PUID=1000
 ARG TINI_VERSION=v0.19.0
 ARG ASA_APPID=2430930
 ARG PROTON_VERSION=tags/GE-Proton10-29
+ARG RCON_VERSION=0.10.3
 ARG TZ=Etc/UTC
 
 ENV ASA_APPID=$ASA_APPID \
@@ -56,8 +57,9 @@ RUN         set -ex; \
             usermod -u ${PUID} -g ${PGID} -l arkuser -d /home/arkuser -m steam; \
             chown -R arkuser:arkuser /home/arkuser; \
             mkdir -p /opt/arkserver; \
-            ln -s /home/arkuser/steamcmd /opt/steamcmd;
+            ln -s /home/arkuser/steamcmd /opt/steamcmd
 
+# Install required packages
 RUN         set -ex; \
             dpkg --add-architecture i386; \
             apt-get update; \
@@ -66,9 +68,10 @@ RUN         set -ex; \
             ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime; \
             dpkg-reconfigure -f noninteractive tzdata; \
             apt-get clean; \
-            rm -rf /var/lib/apt/lists/*;
+            rm -rf /var/lib/apt/lists/*
 
-# Download proton-ge-custom and rcon-cli
+# Install proton-ge-custom
+# https://github.com/GloriousEggroll/proton-ge-custom
 RUN         set -ex; \
             cd /tmp/; \
             curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/${PROTON_VERSION} | jq -r '.assets[].browser_download_url' | egrep .tar.gz)"; \
@@ -77,30 +80,33 @@ RUN         set -ex; \
             rm -f /etc/machine-id; \
             dbus-uuidgen --ensure=/etc/machine-id; \
             rm /var/lib/dbus/machine-id; \
-            dbus-uuidgen --ensure; \
+            dbus-uuidgen --ensure
+
+# Install rcon-cli
+# https://github.com/gorcon/rcon-cli
+RUN         set -ex; \
             cd /tmp/; \
-            curl -sSL https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz > rcon.tar.gz; \
+            curl -sSL https://github.com/gorcon/rcon-cli/releases/download/v${RCON_VERSION}/rcon-${RCON_VERSION}-amd64_linux.tar.gz > rcon.tar.gz; \
             tar xvf rcon.tar.gz; \
-            mv rcon-0.10.3-amd64_linux/rcon /usr/local/bin/;
+            mv rcon-${RCON_VERSION}-amd64_linux/rcon /usr/local/bin/
 
 # Install tini
 ADD         https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
-RUN         chmod +x /tini;
+RUN         chmod +x /tini
 
 # Latest releases available at https://github.com/aptible/supercronic/releases
-ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64 \
-    SUPERCRONIC_SHA1SUM=71b0d58cc53f6bd72cf2f293e09e294b79c666d8 \
+ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.42/supercronic-linux-amd64 \
+    SUPERCRONIC_SHA1SUM=b444932b81583b7860849f59fdb921217572ece2 \
     SUPERCRONIC=supercronic-linux-amd64
 
 RUN curl -fsSLO "$SUPERCRONIC_URL" \
  && echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - \
  && chmod +x "$SUPERCRONIC" \
  && mv "$SUPERCRONIC" "/usr/local/bin/${SUPERCRONIC}" \
- && ln -s "/usr/local/bin/${SUPERCRONIC}" /usr/local/bin/supercronic;
+ && ln -s "/usr/local/bin/${SUPERCRONIC}" /usr/local/bin/supercronic
 
 # Set permissions
 RUN         set -ex; \
-            chown -R arkuser:arkuser /opt/arkserver; \
             mkdir -p /var/backups;\
             chown -R arkuser:arkuser /var/backups;
 
@@ -115,6 +121,4 @@ RUN         ln -s /opt/manager/manager.sh /usr/local/bin/manager; \
 WORKDIR     /opt/arkserver/
 
 HEALTHCHECK CMD /opt/healthcheck.sh
-#HEALTHCHECK CMD manager health || exit 1
-#on startup enter start.sh script
 ENTRYPOINT ["/tini", "--", "/opt/init.sh"]
