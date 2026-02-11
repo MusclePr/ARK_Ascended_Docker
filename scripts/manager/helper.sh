@@ -27,6 +27,8 @@ export UPDATING_FLAG="${SIGNALS_DIR}/updating.lock"
 export RESUME_FLAG="${SIGNALS_DIR}/autoresume_${SERVER_PORT}.flag"
 export STATUS_FILE="${SIGNALS_DIR}/status_${SERVER_PORT}"
 
+RCON_CMDLINE=( rcon -a "127.0.0.1:${RCON_PORT}" -p "${ARK_ADMIN_PASSWORD}" )
+
 # JSON request helpers
 # Write JSON atomically into destination (validates JSON with jq)
 json_atomic_write() {
@@ -81,6 +83,10 @@ mark_request_status() {
         dest="${SIGNALS_DIR}/${base}.failed.${ts}.json"
     fi
     mv -f "$reqpath" "$dest" 2>/dev/null || return 1
+
+    # Delete files older than 7 days with .done or .failed extensions
+    find "${SIGNALS_DIR}" -maxdepth 1 -type f \( -name "*.done.*.json" -o -name "*.failed.*.json" \) -mtime +7 -delete 2>/dev/null || true
+
     return 0
 }
 
@@ -139,7 +145,7 @@ DiscordMessage() {
 
 SelectArchive() {
     set -e
-    path=$1
+    local path=$1 fname
     select fname in $path/*; do
         echo "$fname"
         break;
@@ -152,12 +158,13 @@ SelectArchive() {
 }
 
 sanitize() {
-CLEAN=${1//_/}
-CLEAN=${CLEAN// /_}
-CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
-CLEAN=$(echo -n "$CLEAN" | tr '[:upper:]' '[:lower:]')
-echo "$CLEAN"
-return 0
+    local CLEAN
+    CLEAN=${1//_/}
+    CLEAN=${CLEAN// /_}
+    CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
+    CLEAN=$(echo -n "$CLEAN" | tr '[:upper:]' '[:lower:]')
+    echo "$CLEAN"
+    return 0
 }
 
 wait_for_slave_acks() {
@@ -323,6 +330,7 @@ master_release_after_start() {
 
 
 get_pid() {
+    local pid
     pid=$(pgrep GameThread)
     if [[ -z $pid ]]; then
         return 1
@@ -332,6 +340,7 @@ get_pid() {
 }
 
 get_health() {
+    local server_pid steam_pid
     server_pid=$(get_pid)
     steam_pid=$(pidof steamcmd)
     if [[ "${steam_pid:-0}" != 0 ]]; then
@@ -362,6 +371,7 @@ saveworld() {
     fi
 
     LogInfo "Saving world..."
+    local out res
     out=$(custom_rcon SaveWorld)
     res=$?
     if [[ $res == 0 && "$out" == "World Saved" ]]; then

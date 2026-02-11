@@ -163,7 +163,7 @@ check_maintenance() {
             if [[ "$rcon_listening" == true ]]; then
                 LogWarn "Cluster maintenance detected. Stopping server..."
                 touch "$RESUME_FLAG"
-                stop --saveworld
+                manager stop --saveworld
             else
                 LogInfo "Cluster maintenance detected, but RCON is not listening yet. Skip stop --saveworld."
             fi
