@@ -61,6 +61,16 @@ case "$1" in
     shellcheck)
         shellcheck -x ./scripts/**/*.sh
         ;;
+    exec)
+        shift
+        docker exec -itu arkuser "$@"
+        ;;
+    backup)
+        docker exec -itu arkuser asa0 manager backup
+        ;;
+    restore)
+        docker exec -itu arkuser asa0 manager restore "$2"
+        ;;
     *)
         echo "Usage: $(basename $0) {up|down|build|push|shellcheck}"
         exit 1

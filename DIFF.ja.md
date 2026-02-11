@@ -61,11 +61,12 @@
 
 #### 管理・自動化の強化
 - **クラスター間同期 (Master-Slave モード)**: 
-  - `SLAVE_PORTS` 設定により、複数コンテナ間でのアップデートやバックアップの排他制御を行い、データの整合性を保ちます。
+  - 複数コンテナ間でのアップデートやバックアップの排他制御を行い、データの整合性を保ちます。
 - **詳細な状態監視システム**:
   - `.signals/status_${SERVER_PORT}` ファイルを介して、コンテナ外部から「アップグレード中」「バックアップ中」などの詳細なステータスを確認可能。
-- **メンテナンスカウントダウン**: 
-  - 停止・更新時にカウントダウンをゲーム内チャットへ自動送信します。（現在は日本語）
+- **メンテナンスカウントダウン**:
+  - 停止・更新時にカウントダウンをゲーム内チャットへ自動送信します。
+  - これにより、`UPDATE_WARN_MINUTES` は廃止しました。
 
 #### 安定性・ダウンロードの改善
 - **SteamCMD の安定化**:
@@ -85,7 +86,7 @@
     - `"QUERY_PORT=${ASA0_QUERY_PORT}"`
     - `"DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"`
 
-    > [!WARNING]
+    > [!NOTES]
     > 
     > `.env` は、`docker compose` が暗黙的に参照しますが、コンテナ内の環境変数としては定義されません。
 
@@ -111,7 +112,9 @@
 
 - **マスター／スレーブ対応**:
   - プログラムの更新時に全サーバーを安全に停止する責任がマスターにあり、スレーブはマスターの要求に対して安全に停止する同期処理を行います。
-  - `asa0` のコンテナはマスターとして、マスターのみに与えられる環境変数 `SLAVE_PORTS` を定義し、各スレーブ（`asa1`～）に定義されている `SERVER_PORT` のポート番号をカンマで列挙する事で連動可能になります。
+  - `asa0` のコンテナはマスターとして、環境変数 `SLAVE_PORTS` を定義し、各スレーブ（`asa1`～）に定義されている `SERVER_PORT` のポート番号をカンマで列挙する事で連動可能になります。
+  - 環境変数 `SLAVE_PORTS` を定義するコンテナが、マスターになります。
+  - スレーブの無い単一のコンテナとして動作させる場合は、マスターである事を明示するために、`CLUSTER_MASTER=true` を定義してください。
 
 #### 動作確認環境の追加
 - `run.sh`
@@ -137,24 +140,18 @@
 
 該当ディレクトリが存在しない場合は無視されます。
 
-## クラスタ同期処理について。（メンテナンス／復元フローの一般化）
+## クラスタ同期処理について。（メンテナンスモードについて）
 
-以下はこのリポジトリで追加・改善した運用ロジックの要点です（マスター/スレーブ環境での安全な更新・復元を目的とした改修）。
+以下はこのリポジトリで追加・改善した運用ロジックの要点です（マスター/スレーブ環境での安全な更新・バックアップ・復元を目的とした改修）。
 
-- `scripts/manager/helper.sh` にメンテナンス操作の共通ヘルパーを追加しました。
+- `scripts/manager/helper.sh` にメンテナンス操作やリクエスト操作の共通ヘルパーを追加しました。
   - `enter_maintenance`, `exit_maintenance`, `with_maintenance` などで、クラスター単位の停止・作業・再開処理を再利用できます。
-- `manager.sh` の `start()` を少し改良し、RCON 待ちのログがコンテナ PID1 に届くようバックグラウンド待機を調整しました（`rcon_wait_ready` の出力が docker logs に反映される改善）。
-- 復元フローを「リクエスト駆動」に変更しました:
-  - `manager restore --request <archive>` で `/opt/arkserver/.signals/restore.request` を作成（重複リクエストは拒否）。
-  - コンテナ PID1 側のモニタが `check_requests()` を実行して `.request` を `.processing` に移動し、`restore --apply <archive>` を呼んで実際の復元を行います。
-  - 処理完了後に `.done` または `.failed` に移動してアーカイブします（途中でプロセスが落ちても残らないようトラップで保護）。
-
-これにより、対話実行した際に exec-tty にしか出力されず docker logs に入らない、という問題を解消し、マスター側でログがまとまって出力されるようになりました。
-
-運用メモ:
-- 旧来の key/value リクエストは廃止され、JSON ベースの単一リクエストファイル形式に統一しました。
-  例: `/opt/arkserver/.signals/request.json` を使用します（アクションは JSON の `action` フィールドで指定）。
-
-- 新しいリクエストファイルは処理中に `.processing.<pid>.<ts>.json` に移動され、完了/失敗時は `.done.<ts>.json` / `.failed.<ts>.json` にリネームされます。監査は `/opt/arkserver/.signals` を参照してください。
-
+  - `create_request_json`, `mark_request_status`, `wait_for_response` などで、リクエスト処理を補助します。
+- `scripts/manager/manager.sh` の `start()` を少し改良し、RCON 待ちのログがコンテナ PID1 に届くようバックグラウンド待機を調整しました（`rcon_wait_ready` の出力が docker logs に反映される改善）。
+- `scripts/manager/request_worker.sh` に、マスターへの要求を受け付けます。
+  - これは、PID1の子プロセスとして動作する事で、実行結果をログに残すためです。
+- バックアップおよび復元処理を「リクエスト駆動」に変更しました:
+  - `manager restore --request <archive>` で `/opt/arkserver/.signals/request.json` を作成（重複リクエストは拒否）。
+  - コンテナ PID1 からフォークした `request_worker.sh` が `request.json` を `request-XXXXX.json` にリネームし、`restore --apply <archive>` を呼んで実際の復元を行います。
+  - 処理完了後に `.done.json` または `.failed.json` にリネームしてアーカイブします（途中でプロセスが落ちても残らないようトラップで保護）。
 

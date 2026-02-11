@@ -8,12 +8,7 @@ mkdir -p "$SIGNALS_DIR"
 # Clean up old status files for this port on startup
 rm -f "${SIGNALS_DIR}/status_${SERVER_PORT}" 2>/dev/null || true
 
-is_master=false
 master_lock_acquired=false
-
-if [[ -n "${SLAVE_PORTS}" ]]; then
-    is_master=true
-fi
 
 on_shutdown_signal() {
     LogWarn "Received shutdown signal. Exiting..."
@@ -35,10 +30,10 @@ trap on_shutdown_signal INT TERM
 trap cleanup_master_lock EXIT
 
 wait_for_master_allowed() {
-    LogInfo "Waiting for update master to finish update-check..."
+    LogInfo "Waiting for cluster master to finish update-check..."
     set_server_status "WAIT_MASTER"
     while [[ ! -d "$MASTER_LOCK_DIR" || ! -f "$ALLOWED_FILE" ]]; do
-        if [[ -f "$REQUEST_FILE" || -f "$LOCK_FILE" ]]; then
+        if ( [[ -f "$MAINTENANCE_REQUEST_FILE" ]] && grep -q "stop" "$MAINTENANCE_REQUEST_FILE" 2>/dev/null ) || [[ -f "$LOCK_FILE" ]]; then
             touch "$WAITING_FILE"
         else
             rm -f "$WAITING_FILE" 2>/dev/null || true
@@ -46,7 +41,7 @@ wait_for_master_allowed() {
         sleep 2
     done
     rm -f "$WAITING_FILE" 2>/dev/null || true
-    LogInfo "Update master signaled ready."
+    LogInfo "Cluster master signaled ready."
 }
 
 acquire_master_lock_or_exit() {
@@ -67,9 +62,9 @@ wait_for_valid_installation() {
     set_server_status "WAIT_INSTALL"
     while [[ ! -f "/opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]] || \
           [[ -f "$UPDATING_FLAG" ]] || \
-          [[ -f "$REQUEST_FILE" ]] || \
+          ( [[ -f "$MAINTENANCE_REQUEST_FILE" ]] && grep -q "stop" "$MAINTENANCE_REQUEST_FILE" 2>/dev/null ) || \
           [[ -f "$LOCK_FILE" ]]; do
-        if [[ -f "$REQUEST_FILE" || -f "$LOCK_FILE" ]]; then
+        if ( [[ -f "$MAINTENANCE_REQUEST_FILE" ]] && grep -q "stop" "$MAINTENANCE_REQUEST_FILE" 2>/dev/null ) || [[ -f "$LOCK_FILE" ]]; then
             touch "$WAITING_FILE"
         else
             rm -f "$WAITING_FILE" 2>/dev/null || true
@@ -83,15 +78,14 @@ wait_for_valid_installation() {
 # Create steam directory and set environment variables
 mkdir -p "${STEAM_COMPAT_DATA_PATH}"
 
-if [[ "$is_master" == true ]]; then
+if [[ "${CLUSTER_MASTER,,}" == "true" ]]; then
     # Revoke permission early so slaves never start using a stale flag from a previous run.
     rm -f "$ALLOWED_FILE" 2>/dev/null || true
     acquire_master_lock_or_exit
-    LogInfo "SLAVE_PORTS detected, acting as update master"
-    LogInfo "Running update check (and update if needed) via manager"
-    manager update --no-warn --no-restart
+    LogInfo "Running update check (and update if needed) as cluster master..."
+    manager update --no-start
 else
-    LogInfo "No SLAVE_PORTS, acting as update slave"
+    LogInfo "No SLAVE_PORTS, acting as cluster slave"
     wait_for_master_allowed
 fi
 
@@ -146,16 +140,17 @@ mkdir -p "${LOG_PATH%/*}" && echo "" > "${LOG_PATH}"
 # Start server through manager
 manager start &
 
-# Returns 0 if Update Required
-# Returns 1 if Update NOT Required
-# Returns 2 if Check Failed
-check_maintenance() {
+Slaves_check_maintenance() {
     local rcon_listening=false
     if ss -ltn 2>/dev/null | grep -qE "[:\[]${RCON_PORT}\b"; then
         rcon_listening=true
     fi
+    local req_content=""
+    if [[ -f "$MAINTENANCE_REQUEST_FILE" ]]; then
+        req_content=$(cat "$MAINTENANCE_REQUEST_FILE")
+    fi
 
-    if [[ -f "$LOCK_FILE" || -f "$REQUEST_FILE" ]]; then
+    if [[ -f "$LOCK_FILE" ]] || [[ "$req_content" == *"stop"* ]]; then
         # Mark that this server is waiting for maintenance and stop safely
         touch "$WAITING_FILE"
         set_server_status "MAINTENANCE"
@@ -168,28 +163,36 @@ check_maintenance() {
                 LogInfo "Cluster maintenance detected, but RCON is not listening yet. Skip stop --saveworld."
             fi
         fi
+    elif [[ "$req_content" == *"save"* ]]; then
+        if [[ ! -f "$WAITING_FILE" ]]; then
+            LogInfo "Cluster maintenance detected (save)."
+            if get_health >/dev/null && [[ "$rcon_listening" == true ]]; then
+                saveworld
+            fi
+            touch "$WAITING_FILE"
+        fi
     else
         rm -f "$WAITING_FILE" 2>/dev/null || true
         if [[ -f "$RESUME_FLAG" ]]; then
             LogInfo "Maintenance finished. Resuming server..."
             rm -f "$RESUME_FLAG"
-            start
+            manager start
         fi
     fi
 }
 
-if [[ "$is_master" == false ]]; then
+if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
     (
         while true; do
-            check_maintenance || true
+            Slaves_check_maintenance || true
             sleep "${POLL_INTERVAL:-5}"
         done
     ) &
     MONITOR_PID=$!
 fi
 
-# Start request worker to handle unified JSON requests (if present)
-if [[ -x "/opt/manager/request_worker.sh" ]]; then
+# Start request worker to handle unified JSON requests (if present) - Master only
+if [[ "${CLUSTER_MASTER,,}" == "true" ]] && [[ -x "/opt/manager/request_worker.sh" ]]; then
     /opt/manager/request_worker.sh &
     REQUEST_WORKER_PID=$!
     LogInfo "Started request_worker (pid=${REQUEST_WORKER_PID})"

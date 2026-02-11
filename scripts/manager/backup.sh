@@ -1,26 +1,71 @@
 #!/usr/bin/env bash
 # Master-side backup request helper
-# Usage: backup.sh request
+# Usage: backup.sh --request|--apply
 
 set -euo pipefail
 
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
-mode="request"
-if [[ $# -gt 0 ]]; then
-    mode="$1"
-fi
+Backup_request() {
+    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
+    if [[ -f "$REQUEST_JSON" ]]; then
+        LogError "A request already exists: $REQUEST_JSON. Please wait for it to be processed or remove it manually."
+        return 3
+    fi
 
-# backup implementation migrated from manager.sh
-backup() {
+    # Build JSON payload and write atomically
+    local ts req_id payload
+    ts=$(date -Is 2>/dev/null || date +%s)
+    req_id="$(date +%s)-$$-$RANDOM"
+    payload=$(mktemp)
+    jq -n --arg action "backup" --arg request_id "$req_id" --arg requested_by "${USER:-$(whoami 2>/dev/null || echo unknown)}" --arg timestamp "$ts" '{action:$action,request_id:$request_id,requested_by:$requested_by,timestamp:$timestamp}' > "$payload"
+    if ! create_request_json "backup" "$payload"; then
+        LogError "Failed to create backup request (busy)."
+        rm -f "$payload"
+        return 4
+    fi
+    rm -f "$payload"
+    LogSuccess "Backup request created: $REQUEST_JSON"
+    wait_for_response "$req_id"
+    return $?
+}
+
+# Create backup immediately (called by worker/monitor)
+Backup_create() {
     local path="/var/backups"
-    local tmp_path="/opt/arkserver/tmp/backup"
+    local tmp_path="/opt/arkserver/tmp/backup_$$"
 
     LogInfo "Creating backup. Backups are saved in your backup volume."
     set_server_status "BACKUP_SAVE"
 
     saveworld
+
+    # Wait for save files to stabilize (check size constancy)
+    LogInfo "Waiting for save file stability..."
+    local _chk_basedir="/opt/arkserver/ShooterGame/Saved"
+    local _s_prev=""
+    local _s_curr=""
+    local _s_retries=24 # Max 2 mins
+    for ((i=0; i<_s_retries; i++)); do
+        sync
+        sleep 5
+        # Calculate sum of sizes of all .ark files
+        _s_curr=$(find "$_chk_basedir/SavedArks" -name "*.ark" -type f -exec stat -c%s {} + 2>/dev/null | awk '{s+=$1} END {print s}')
+        _s_curr=${_s_curr:-0}
+        
+        if [[ "$_s_prev" == "$_s_curr" && "$_s_curr" != "0" ]]; then
+            LogSuccess "Save files are stable (Size: $_s_curr bytes)."
+            break
+        fi
+        
+        if [[ $i -eq $((_s_retries - 1)) ]]; then
+             LogWarn "Timed out waiting for save file stability. Proceeding immediately."
+        elif [[ "$_s_prev" != "" ]]; then
+             LogInfo "Waiting for disk write... (Size changing: $_s_prev -> $_s_curr)"
+        fi
+        _s_prev="$_s_curr"
+    done
 
     mkdir -p "$path"
     mkdir -p "$tmp_path"
@@ -45,7 +90,7 @@ backup() {
             if [[ -d "${__entry}" ]]; then
                 found_any=true
                 mkdir -p "$tmp_path/Saved/SavedArks"
-                (cd "$saved_base/SavedArks" && tar -cf - --exclude='*.profilebak' --exclude='*.tribebak' --exclude="${__m}_*.ark" "${__m}") | tar -C "$tmp_path/Saved/SavedArks" -xf -
+                (cd "$saved_base/SavedArks" && (tar -cf - --exclude='*.profilebak' --exclude='*.tribebak' --exclude="${__m}_*.ark" "${__m}" || [[ $? -eq 1 ]])) | tar -C "$tmp_path/Saved/SavedArks" -xf -
             fi
         done
         if [[ "$found_any" != true ]]; then
@@ -57,17 +102,17 @@ backup() {
 
     if [[ -d "$saved_base/SaveGames" ]]; then
         mkdir -p "$tmp_path/Saved"
-        tar -C "$saved_base" -cf - "SaveGames" | tar -C "$tmp_path/Saved" -xf -
+        (tar -C "$saved_base" -cf - "SaveGames" || [[ $? -eq 1 ]]) | tar -C "$tmp_path/Saved" -xf -
     fi
 
     if [[ -d "$saved_base/Config/WindowsServer" ]]; then
         mkdir -p "$tmp_path/Saved/Config"
-        tar -C "$saved_base/Config" -cf - "WindowsServer" | tar -C "$tmp_path/Saved/Config" -xf -
+        (tar -C "$saved_base/Config" -cf - "WindowsServer" || [[ $? -eq 1 ]]) | tar -C "$tmp_path/Saved/Config" -xf -
     fi
 
     if [[ -n "${CLUSTER_ID}" && -d "$saved_base/Cluster/clusters/${CLUSTER_ID}" ]]; then
         mkdir -p "$tmp_path/Saved/Cluster/clusters"
-        tar -C "$saved_base/Cluster/clusters" -cf - "${CLUSTER_ID}" | tar -C "$tmp_path/Saved/Cluster/clusters" -xf -
+        (tar -C "$saved_base/Cluster/clusters" -cf - "${CLUSTER_ID}" || [[ $? -eq 1 ]]) | tar -C "$tmp_path/Saved/Cluster/clusters" -xf -
     fi
 
     if [[ -z "$(ls -A "$tmp_path" 2>/dev/null)" ]]; then
@@ -75,8 +120,8 @@ backup() {
     fi
 
     LogInfo "Creating archive"
-    tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved
-    if [[ $? == 1 ]]; then
+    tar -czf "$path/${archive_name}.tar.gz" -C "$tmp_path" Saved || [[ $? -eq 1 ]]
+    if [[ $? -gt 1 ]]; then
         LogError "Creating backup failed" >> "$LOG_PATH"
         return 1
     fi
@@ -93,54 +138,51 @@ backup() {
     return 0
 }
 
-if [[ "$mode" == "request" ]]; then
-    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
-
-    local_ts=$(date -Is 2>/dev/null || date +%s)
-    # generate a simple request id
-    req_id="$(date +%s)-$$-$RANDOM"
-    payload=$(mktemp)
-    # Build JSON payload
-    jq -n --arg action "backup" --arg request_id "$req_id" --arg requested_by "${USER:-$(whoami 2>/dev/null || echo unknown)}" --arg timestamp "$local_ts" '{action:$action,request_id:$request_id,requested_by:$requested_by,timestamp:$timestamp}' > "$payload"
-
-    if [[ -e "${REQUEST_JSON}" ]]; then
-        LogError "A request already exists (${REQUEST_JSON}). Aborting."
-        rm -f "$payload"
-        exit 3
-    fi
-
-    if ! create_request_json "backup" "$payload"; then
-        LogError "Failed to create backup request (busy)."
-        rm -f "$payload"
-        exit 4
-    fi
-
-    rm -f "$payload"
-
-    LogInfo "Backup request created. Initiating cluster maintenance and waiting for slaves."
+# Apply backup immediately (called by worker/monitor)
+Backup_apply() {
+    # Enter cluster maintenance save mode (requests cluster-wide save)
+    LogInfo "Backup request started. Initiating cluster maintenance and waiting for slaves."
+    local request_started_epoch
     request_started_epoch=$(date +%s)
-    enter_maintenance "$request_started_epoch"
+    enter_maintenance save "$request_started_epoch"
 
-    LogInfo "Performing master-local backup now..."
-    if ! backup; then
+    LogInfo "Performing create backup now..."
+    if ! Backup_create; then
         rc=$?
-        LogError "Local backup failed with code $rc"
-        # mark processing request as failed (use JSON-aware wrapper)
-        mark_request_status "${REQUEST_JSON}" "failed"
-        exit $rc
+        LogError "Backup failed with code $rc"
+        return $rc
     fi
 
-    # mark done
-    mark_request_status "${REQUEST_JSON}" "done"
     LogSuccess "Cluster backup completed on master. Releasing maintenance locks."
     exit_maintenance
-    exit 0
+    return 0
+}
 
-elif [[ "$mode" == "apply" ]]; then
-    # Perform local backup without creating a new request (used by worker)
-    backup
+Backup_main() {
+    if [ "${CLUSTER_MASTER,,}" != "true" ]; then
+        LogError "Backup can only be initiated on the cluster master node."
+        return 1
+    fi
+
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            --apply)
+                Backup_apply
+                return $?
+                ;;
+            --request)
+                Backup_request
+                return $?
+                ;;
+        esac
+    fi
+
+    LogError "Usage: backup.sh [--request | --apply]"
+    return 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    # Called directly: forward CLI to restore function
+    Backup_main "$@"
     exit $?
-else
-    echo "Usage: $0 request|apply"
-    exit 1
 fi

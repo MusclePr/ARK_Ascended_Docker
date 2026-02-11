@@ -1,95 +1,96 @@
-# ARK Survival Ascended Docker Server (MusclePr Fork — Changes)
+# ARK Survival Ascended Docker Server (MusclePr Fork - Changes)
 
-This document explains the main changes and added features in the MusclePr fork of the ARK Survival Ascended Docker Server, built on top of the original azixus repository (https://github.com/azixus/ARK_Ascended_Docker) and the Luatan fork (https://github.com/Luatan/ARK_Ascended_Docker).
+This document explains the main changes and added features in the MusclePr fork of the original [azixus repository](https://github.com/azixus/ARK_Ascended_Docker) and the intermediate fork by [Luatan](https://github.com/Luatan/ARK_Ascended_Docker).
 
-For basic usage and setup, see [README.md](./README.md).
+Refer to [README.md](./README.md) for basic usage.
 
-## Major improvements and added features
+## Major Improvements and Additions
 
-This MusclePr fork builds on the Luatan base and includes changes aimed at improving operational stability and usability for Japanese environments.
+This MusclePr fork builds on Luatan's work and includes changes to improve operational stability and the user experience in Japanese environments.
 
-### 1. Key improvements from the Luatan fork
-- **Basic log support**: Added a logging system with color-aware helpers
-```bash
-LogInfo() {
-    Log "$1" "$WhiteText"
-}
-LogWarn() {
-    Log "$1" "$YellowBoldText"
-}
-LogError() {
-    Log "$1" "$RedBoldText"
-}
-LogSuccess() {
-    Log "$1" "$GreenBoldText"
-}
-```
-- **Basic Discord notification support**: Basic logic to notify Discord about server events
-```ini
-DISCORD_WEBHOOK_URL=
-DISCORD_CONNECT_TIMEOUT=30
-DISCORD_MAX_TIMEOUT=30
-```
-- **Detailed status retrieval**: Ability to fetch server name, version and other details from Epic Online Services (EOS) using `manager status --full`.
-- **Scheduled backups and updates**: Automated tasks with supercronic
-```ini
-AUTO_BACKUP_ENABLED=false
-OLD_BACKUP_DAYS=7
-AUTO_BACKUP_CRON_EXPRESSION="0 0 * * *"
-AUTO_UPDATE_ENABLED=false
-AUTO_UPDATE_CRON_EXPRESSION="0 * * * *"
-UPDATE_WARN_MINUTES=30
-```
-- **Healthcheck system**: Synchronizes container state with the actual game process (Wine/Proton) and supports auto-restart (self-healing) when anomalies are detected.
-```ini
-SERVER_SHUTDOWN_TIMEOUT=30
-HEALTHCHECK_CRON_EXPRESSION="*/5 * * * *"
-HEALTHCHECK_SELFHEALING_ENABLED=false
-```
-- **Dynamic web configuration**:
-  - Support for loading settings dynamically from `web/dynamicconfig.ini` so external tools can change configuration at runtime.
+### 1. Key improvements from Luatan
+- **Basic log support**: added a logging system that considers colors
+    ```bash
+    LogInfo() {
+        Log "$1" "$WhiteText"
+    }
+    LogWarn() {
+        Log "$1" "$YellowBoldText"
+    }
+    LogError() {
+        Log "$1" "$RedBoldText"
+    }
+    LogSuccess() {
+        Log "$1" "$GreenBoldText"
+    }
+    ```
+- **Basic Discord notifications**: basic logic to send server events to Discord
+    ```ini
+    DISCORD_WEBHOOK_URL=
+    DISCORD_CONNECT_TIMEOUT=30
+    DISCORD_MAX_TIMEOUT=30
+    ```
+- **Detailed status retrieval**: fetch server name, version, etc. from Epic Online Services (EOS) (`manager status --full`).
+- **Scheduled backups and updates**: automation via supercronic
+    ```ini
+    AUTO_BACKUP_ENABLED=false
+    OLD_BACKUP_DAYS=7
+    AUTO_BACKUP_CRON_EXPRESSION="0 0 * * *"
+    AUTO_UPDATE_ENABLED=false
+    AUTO_UPDATE_CRON_EXPRESSION="0 * * * *"
+    UPDATE_WARN_MINUTES=30
+    ```
+- **Health check feature**: synchronizes container state with the actual game process (Wine/Proton), detects anomalies, and attempts auto-restart (self-healing) for stable operation
+    ```ini
+    SERVER_SHUTDOWN_TIMEOUT=30
+    HEALTHCHECK_CRON_EXPRESSION="*/5 * * * *"
+    HEALTHCHECK_SELFHEALING_ENABLED=false
+    ```
+- **Web dynamic config**:
+  - Supports loading dynamic settings from external tools via `web/dynamicconfig.ini`.
 
 ### 2. MusclePr fork — unique additions and improvements
 
-This fork addresses running multiple maps with a single program while solving the following problems:
+- Implemented multi-map support with a single program, addressing these issues:
 
-❌ Each additional map consuming ~11GB of disk space per map.
+  ❌ Disk bloat of ~11GB per added map.
 
-❌ Requirement to update program files for all maps when updating.
+  ❌ Needing to update the program for all maps every time.
 
-❌ Managing mods and settings separately per map was cumbersome.
+  ❌ Managing MODs and settings per map is cumbersome.
 
-#### Management and automation improvements
+#### Management and Automation Enhancements
 - **Cluster synchronization (Master-Slave mode)**:
-  - Using the `SLAVE_PORTS` setting to coordinate updates and backups between containers to ensure data consistency.
-- **Detailed status monitoring**:
-  - External visibility into states like "upgrading" or "backing up" via `.signals/status_${SERVER_PORT}` files.
+  - Provides exclusive control for updates and backups across multiple containers to maintain data consistency.
+- **Detailed status monitoring system**:
+  - External tools can check detailed statuses such as "upgrading" or "backing up" via `.signals/status_${SERVER_PORT}` files.
 - **Maintenance countdown**:
-  - Automatically sends countdown messages to in-game chat when stopping/updating servers (currently in Japanese).
+  - Sends countdown messages automatically to in-game chat when shutting down or updating.
+  - `UPDATE_WARN_MINUTES` has been removed in favor of this mechanism.
 
-#### Stability and download improvements
+#### Stability and Download Improvements
 - **SteamCMD stabilization**:
-  - Implemented a SteamCMD warm-up on initial login and automatic retry logic for failed downloads in `init.sh`.
-- **Permission optimizations**:
-  - Changed the base image to `cm2network/steamcmd:root` to avoid permission issues when mounting volumes.
+  - Implemented SteamCMD "warm-up" (stabilize first login) in `init.sh` and automatic retry on download failures.
+- **Execution permission optimization**:
+  - Changed the base image to `cm2network/steamcmd:root` to avoid permission issues with volume mounts.
 
-#### Extended Discord notifications
-- Extended detection from `ShooterGame.log` to notify Discord on player login/logout events.
+#### Expanded Discord notifications
+- Extended capability to detect login/logout events from `ShooterGame.log` and notify Discord.
 
 #### Configuration flexibility and extensibility
 - **Structured environment variables**:
-  - Per-map container variables are structured in `compose.yml` and can be set via `.env`. Examples:
+  - Per-map container environment variables are structured in `compose.yml`, making per-container configuration easy by setting variables in `.env`, for example:
     - "SERVER_MAP=${ASA0_SERVER_MAP}"
     - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA0_SESSION_NAME}"
     - "SERVER_PORT=${ASA0_SERVER_PORT}"
     - "QUERY_PORT=${ASA0_QUERY_PORT}"
     - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
 
-    > [!WARNING]
+    > [!NOTES]
     >
-    > `.env` is read implicitly by `docker compose` but is not automatically exported as container environment variables.
+    > `.env` is implicitly read by `docker compose`, but variables from `.env` are not automatically exported as container environment variables unless defined in the compose config.
 
-  - Common variables can be defined in `.common.env` for easy reuse. Examples include:
+  - Common environment variables can be defined in `.common.env` for easy configuration, such as:
     - `MAX_PLAYERS`
     - `HEALTHCHECK_SELFHEALING_ENABLED`
     - `SERVER_PASSWORD`
@@ -104,44 +105,53 @@ This fork addresses running multiple maps with a single program while solving th
     - `DYNAMIC_CONFIG_URL`
     - `ARK_EXTRA_OPTS`
     - `ARK_EXTRA_DASH_OPTS`
-    - `MSG_MAINTENANCE_COUNTDOWN` e.g. "Server will shut down for maintenance. Please log out safely. %d seconds left."
-    - `MSG_MAINTENANCE_COUNTDOWN_SOON` e.g. "%d"
-    - `DISCORD_MSG_JOINED` e.g. "%s joined"
-    - `DISCORD_MSG_LEFT` e.g. "%s left"
+    - `MSG_MAINTENANCE_COUNTDOWN` — e.g. "Server maintenance: shutting down. Please log out in a safe place. %d seconds remaining."
+    - `MSG_MAINTENANCE_COUNTDOWN_SOON` — e.g. "%d seconds left"
+    - `DISCORD_MSG_JOINED` — e.g. "%s joined."
+    - `DISCORD_MSG_LEFT` — e.g. "%s left."
 
 - **Master/Slave support**:
-  - The master is responsible for safely shutting down all servers when updating the program, and the slaves perform the synchronization process to safely shut down when requested by the master.
-  - The `asa0` container acts as master and can be given `SLAVE_PORTS` to list slave `SERVER_PORT` values.
+  - The master container is responsible for safely stopping all servers during program updates; slaves synchronize and stop safely upon the master's request.
+  - The container named `asa0` acts as master by defining the `SLAVE_PORTS` environment variable, listing slave `SERVER_PORT` values (asa1, etc.) separated by commas.
+  - The container that defines `SLAVE_PORTS` becomes the master.
+  - To run a single container without slaves, explicitly set `CLUSTER_MASTER=true` to indicate it is the master.
 
-    #### Test/run helpers
-    - `run.sh`
-    ```bash
-    Usage: run.sh {up|down|build|push}
-    ```
-      - `up` ... `docker compose up -d`
-      - `down` ... `docker compose down`
-      - `build` ... `docker build`
-      - `push` ... `docker push`
+#### Additional environment for verification
+- `run.sh`
+  ```bash
+  Usage: run.sh {up|down|build|push|shellcheck}
+  ```
+  - up ... docker compose up -d
+  - down ... docker compose down
+  - build ... docker build
+  - push ... docker push
+  - shellcheck ... shellcheck
 
-    ## Backup/Restore changes (server-only backup)
+## Backup/Restore changes (cluster-level backups)
 
-    This fork does not support saving multiple maps together as a cluster.
-    
-    Backups now include only the following subpaths under `/opt/arkserver/ShooterGame/Saved`:
+This fork supports backups at the cluster level only.
 
-    - `Saved/SavedArks/${SERVER_MAP}` — map/tribe/player saves (exclude `*.profilebak`, `*.tribebak`, and `${SERVER_MAP}_*.ark`)
-    - `Saved/SaveGames` — mod save data
-    - `Saved/Config/WindowsServer` — `Game.ini`, `GameUserSettings.ini`, `Engine.ini`, etc.
-    - `Saved/Cluster/clusters/${CLUSTER_ID}` — cluster metadata
+Backups include only the following subpaths under `/opt/arkserver/ShooterGame/Saved`:
 
-    Directories that do not exist are ignored.
-    
-    Restore supports the following options:
+1. `Saved/SavedArks` — map/tribe/player saves (excluding `*.profilebak`, `*.tribebak`, and `${SERVER_MAP}_*.ark`)
+2. `Saved/SaveGames` — MOD save data
+3. `Saved/Config/WindowsServer` — configuration files such as `Game.ini`, `GameUserSettings.ini`, `Engine.ini`
+4. `Saved/Cluster/clusters/${CLUSTER_ID}` — cluster metadata
 
-    - `--no-cluster` — do not restore cluster data
-    - `--no-mod` — do not restore mod `SaveGames`
-    - `--no-config` — do not restore `Config/WindowsServer`
-    - `--map-only` — shorthand; equivalent to `--no-cluster --no-mod --no-config`
-    - `--no-start` — do not automatically start the server after restore
+Directories that do not exist are ignored.
 
-    These changes reduce backup size and simplify single-node restores. See `manager restore --help` and the Japanese changelog for details.
+## Cluster synchronization (maintenance mode)
+
+The following summarizes operational logic added or improved in this repository to support safe updates, backups, and restores in master/slave environments.
+
+- Added common helpers for maintenance and request operations in `scripts/manager/helper.sh`:
+  - Reusable functions like `enter_maintenance`, `exit_maintenance`, and `with_maintenance` for cluster-wide stop/work/resume workflows.
+  - Helpers such as `create_request_json`, `mark_request_status`, and `wait_for_response` to assist request processing.
+- Slight improvement to `scripts/manager/manager.sh`'s `start()` so that RCON wait logs reach the container's PID 1, allowing `rcon_wait_ready` output to appear in `docker logs`.
+- Added `scripts/manager/request_worker.sh` to accept requests to the master:
+  - This runs as a child process of PID 1 so the execution result is retained in logs.
+- Backup and restore operations are now request-driven:
+  - `manager restore --request <archive>` creates `/opt/arkserver/.signals/request.json` (duplicate requests are rejected).
+  - A `request_worker.sh` forked from PID 1 renames `request.json` to `request-XXXXX.json` and calls `restore --apply <archive>` to perform the actual restore.
+  - Upon completion the worker renames the file to `.done.json` or `.failed.json` to archive the result (protected by traps so files aren't left behind if the process dies).
+
