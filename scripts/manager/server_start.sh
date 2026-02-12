@@ -5,7 +5,7 @@ source "/opt/manager/helper.sh"
 
 # Server main options
 # shellcheck disable=SC2153
-cmd="${SERVER_MAP}?listen?SessionName=\"${SESSION_NAME}\"?Port=${SERVER_PORT}"
+cmd="${SERVER_MAP}?listen?Port=${SERVER_PORT}?SessionName=\"${SESSION_NAME}\""
 if [ -n "${MAX_PLAYERS}" ]; then
     cmd="${cmd}?MaxPlayers=${MAX_PLAYERS}"
 fi
@@ -57,6 +57,10 @@ fi
 
 if [ -n "${SERVER_IP}" ]; then
     ark_flags+=("-ServerIP=${SERVER_IP}")
+fi
+
+if [ -n "${SERVER_PORT}" ]; then
+    ark_flags+=("-Port=${SERVER_PORT}")
 fi
 
 if [ -n "${QUERY_PORT}" ]; then

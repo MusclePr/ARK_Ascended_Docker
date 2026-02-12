@@ -65,8 +65,6 @@ Restore_request() {
     return $?
 }
 
-tmp_restore=""
-
 Restore_apply() {
     local archive="$1"
     if [[ -z "$archive" ]]; then
