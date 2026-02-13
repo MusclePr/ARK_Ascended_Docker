@@ -155,3 +155,7 @@
   - コンテナ PID1 からフォークした `request_worker.sh` が `request.json` を `request-XXXXX.json` にリネームし、`restore --apply <archive>` を呼んで実際の復元を行います。
   - 処理完了後に `.done.json` または `.failed.json` にリネームしてアーカイブします（途中でプロセスが落ちても残らないようトラップで保護）。
 
+## セッション名衝突問題
+
+- 2026/2/13 にこれまで引数で与えていて有効だったセッション名 `?SessionName=""` が、`GameUserSettings.ini` の `SessionName=` を優先する様になったため、複数のマップサーバーで同じ名前が適用され、サーバー一覧には、単一のセッション名に対し、更新するたびに異なるマップ名が表示されるという衝突が発生した。
+  - これを回避するために、`GameUserSettings.ini` のセッション名をロック付きで書き換える処理を追加しました。
