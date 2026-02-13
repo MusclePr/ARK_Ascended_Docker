@@ -26,6 +26,7 @@ export MASTER_LOCK_OWNER_FILE="${MASTER_LOCK_DIR}/owner"
 export UPDATING_FLAG="${SIGNALS_DIR}/updating.lock"
 export RESUME_FLAG="${SIGNALS_DIR}/autoresume_${SERVER_PORT}.flag"
 export STATUS_FILE="${SIGNALS_DIR}/status_${SERVER_PORT}"
+export SESSION_NAME_LOCK="${SIGNALS_DIR}/session_name.lock"
 
 RCON_CMDLINE=( rcon -a "127.0.0.1:${RCON_PORT}" -p "${ARK_ADMIN_PASSWORD}" )
 
@@ -443,3 +444,27 @@ saveworld() {
     sleep 5
 }
 
+
+acquire_session_name_lock() {
+    LogInfo "Acquiring session name lock..."
+    while ! mkdir "${SESSION_NAME_LOCK}" 2>/dev/null; do
+        sleep 1
+    done
+    LogInfo "Session name lock acquired."
+}
+
+release_session_name_lock() {
+    LogInfo "Releasing session name lock..."
+    rmdir "${SESSION_NAME_LOCK}" 2>/dev/null
+    LogInfo "Session name lock released."
+}
+
+wait_rcon_ready_and_release_lock() {
+    LogInfo "Waiting for server to be ready for RCON to release session name lock..."
+    # Wait for RCON to respond
+    while ! "${RCON_CMDLINE[@]}" "ListPlayers" > /dev/null 2>&1; do
+        sleep 10
+    done
+    LogSuccess "Server is ready. Releasing session name lock."
+    release_session_name_lock
+}
