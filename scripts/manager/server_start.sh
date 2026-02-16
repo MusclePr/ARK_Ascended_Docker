@@ -87,20 +87,6 @@ fi
 #fix for docker compose exec / docker exec parsing inconsistencies
 STEAM_COMPAT_DATA_PATH=$(eval echo "$STEAM_COMPAT_DATA_PATH")
 
-# Logic to update SessionName in GameUserSettings.ini
-GUS_FILE="/opt/arkserver/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini"
-if [ -f "${GUS_FILE}" ] && [ -n "${SESSION_NAME}" ]; then
-    # tr -d '\r' to handle Windows-style line endings
-    CURRENT_SESSION_NAME=$(grep "^SessionName=" "${GUS_FILE}" | cut -d'=' -f2- | tr -d '\r')
-    if [ "${CURRENT_SESSION_NAME}" != "${SESSION_NAME}" ]; then
-        LogInfo "SessionName change detected in ${GUS_FILE}: '${CURRENT_SESSION_NAME}' -> '${SESSION_NAME}'"
-        acquire_session_name_lock
-        sed -i "s/^SessionName=.*/SessionName=${SESSION_NAME}/" "${GUS_FILE}"
-        # Wait for RCON in background to release lock once server is fully up
-        wait_rcon_ready_and_release_lock &
-    fi
-fi
-
 #starting server and outputting log file
 proton run /opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe "${cmd}" "${ark_flags[@]}" >> "${LOG_PATH}" 2>&1
 
