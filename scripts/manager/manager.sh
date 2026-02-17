@@ -208,6 +208,112 @@ rcon_wait_ready() {
     return 1
 }
 
+monitor_gusini() {
+    if [[ "${GUS_MONITOR,,}" != "true" || "${CLUSTER_MASTER,,}" != "true" ]]; then
+        return
+    fi
+
+    local gus_dir="/opt/arkserver/ShooterGame/Saved/Config/WindowsServer"
+    local gus_file="GameUserSettings.ini"
+    LogInfo "Starting GameUserSettings.ini monitor..."
+
+    (
+        # Wait for directory
+        until [[ -d "$gus_dir" ]]; do sleep 5; done
+
+        if ! command -v inotifywait >/dev/null; then
+            echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;31m[ERROR]\033[0m [GUS_MONITOR] inotifywait not found."
+            return
+        fi
+
+        local saw_modify=false
+        local skip_next_access=false
+        local backup_dir="/opt/arkserver/tmp"
+        mkdir -p "$backup_dir" 2>/dev/null || true
+
+        get_next_backup_path() {
+            local base="${backup_dir}/${gus_file}.bak"
+            local max_seq=0
+            local f seq
+            for f in "${base}."*; do
+                [[ -e "$f" ]] || continue
+                seq=${f##*.}
+                if [[ "$seq" =~ ^[0-9]+$ ]] && (( 10#$seq > max_seq )); then
+                    max_seq=$((10#$seq))
+                fi
+            done
+            printf '%s.%04d' "$base" $((max_seq + 1))
+        }
+
+        get_previous_backup_path() {
+            local base="${backup_dir}/${gus_file}.bak"
+            local max_seq=0
+            local f seq
+            for f in "${base}."*; do
+                [[ -e "$f" ]] || continue
+                seq=${f##*.}
+                if [[ "$seq" =~ ^[0-9]+$ ]] && (( 10#$seq > max_seq )); then
+                    max_seq=$((10#$seq))
+                fi
+            done
+            if (( max_seq > 0 )); then
+                printf '%s.%04d' "$base" "$max_seq"
+            fi
+        }
+
+        rm -f "${backup_dir}/${gus_file}.bak."* 2>/dev/null || true
+        local initial_src="${gus_dir}/${gus_file}"
+        if [[ -s "$initial_src" ]]; then
+            local initial_backup
+            initial_backup=$(get_next_backup_path)
+            cp -f "$initial_src" "$initial_backup"
+            #echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;36m[INFO] \033[0m [GUS_MONITOR] Initial backup saved: $initial_backup"
+        #else
+            #echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;33m[WARN] \033[0m [GUS_MONITOR] Initial backup skipped (empty file)."
+        fi
+
+        inotifywait -m -e access -e modify -e close_write --format '%f %e' "$gus_dir" 2>/dev/null | \
+        while read -r filename events; do
+            if [[ "$filename" == "$gus_file" ]]; then
+                if [[ "$events" == *"ACCESS"* && "$skip_next_access" == true ]]; then
+                    # Skip the next access event after a modify to avoid double-processing
+                    skip_next_access=false
+                    continue
+                fi
+                echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;36m[INFO] \033[0m [GUS_MONITOR] $events detected on $filename"
+                if [[ "$events" == *"MODIFY"* ]]; then
+                    saw_modify=true
+                fi
+                if [[ "$events" == *"CLOSE_WRITE"* && "$saw_modify" == true ]]; then
+                    local src_file="${gus_dir}/${gus_file}"
+                    if [[ -s "$src_file" ]]; then
+                        local backup_path
+                        backup_path=$(get_next_backup_path)
+                        local prev_backup
+                        prev_backup=$(get_previous_backup_path)
+                        cp -f "$src_file" "$backup_path"
+                        skip_next_access=true
+                        #echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;36m[INFO] \033[0m [GUS_MONITOR] Backup saved: $backup_path"
+                        if [[ -n "$prev_backup" && -f "$prev_backup" ]]; then
+                            local changes
+                            changes=$(diff -u "$prev_backup" "$backup_path" || true)
+                            if [[ -n "$changes" ]]; then
+                                echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;36m[INFO] \033[0m [GUS_MONITOR] Changes since last backup:\n$changes"
+                            else
+                                echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;36m[INFO] \033[0m [GUS_MONITOR] No changes since last backup."
+                                rm -f "$backup_path" 2>/dev/null || true
+                            fi
+                        fi
+                    else
+                        echo -e "$(date +'%Y-%m-%d %H:%M:%S') \033[1;33m[WARN] \033[0m [GUS_MONITOR] Backup skipped (empty file)."
+                    fi
+                    saw_modify=false
+                fi
+            fi
+        done
+    ) &
+}
+
 start() {
     if get_health >/dev/null; then
         LogInfo "Server is already running."
@@ -237,6 +343,7 @@ start() {
     # Start server in the background + nohup and save PID
     DISCORD_MSG_STARTING="${DISCORD_MSG_STARTING:-The Server is starting}"
     DiscordMessage "Start $SESSION_NAME" "$DISCORD_MSG_STARTING" "success"
+    monitor_gusini
     nohup /opt/manager/server_start.sh >/dev/null 2>&1 &
     sleep 3
 
