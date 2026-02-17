@@ -63,7 +63,7 @@ RUN         set -ex; \
 RUN         set -ex; \
             dpkg --add-architecture i386; \
             apt-get update; \
-            apt-get install -y --no-install-recommends tzdata wget curl jq jo sudo iproute2 procps dbus python3 libfreetype6 libvulkan1 libfontconfig1; \
+            apt-get install -y --no-install-recommends tzdata wget curl jq jo sudo iproute2 procps dbus python3 libfreetype6 libvulkan1 libfontconfig1 inotify-tools; \
             echo "${TZ}" > /etc/timezone; \
             ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime; \
             dpkg-reconfigure -f noninteractive tzdata; \
