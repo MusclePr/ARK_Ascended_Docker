@@ -8,6 +8,7 @@ services:
     ports:
       - "${ASA0_SERVER_PORT}:${ASA0_SERVER_PORT}/udp"
       - "${ASA0_QUERY_PORT}:${ASA0_QUERY_PORT}/udp"
+      - "8081:8081/tcp" # For proxy web interface (if AUTO_PAUSE_DEBUG enabled)
     environment:
       - "SERVER_MAP=${ASA0_SERVER_MAP}"
       - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA0_SESSION_NAME}"
@@ -16,11 +17,12 @@ services:
       - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
     # --- As asa0 is a cluster master server, the following specific settings are required. ---
       - "CLUSTER_MASTER=true"
-      - "SLAVE_PORTS=${ASA_SLAVE_PORTS}"
-      - "AUTO_BACKUP_ENABLED=${ASA_AUTO_BACKUP_ENABLED}"
-      - "AUTO_BACKUP_CRON_EXPRESSION=${ASA_AUTO_BACKUP_CRON_EXPRESSION}"
-      - "AUTO_UPDATE_ENABLED=${ASA_AUTO_UPDATE_ENABLED}"
-      - "AUTO_UPDATE_CRON_EXPRESSION=${ASA_AUTO_UPDATE_CRON_EXPRESSION}"
+      - "CLUSTER_NODES=${ASA0_CLUSTER_NODES:-2}"
+      - "AUTO_BACKUP_ENABLED=${ASA0_AUTO_BACKUP_ENABLED}"
+      - "AUTO_BACKUP_CRON_EXPRESSION=${ASA0_AUTO_BACKUP_CRON_EXPRESSION}"
+      - "AUTO_UPDATE_ENABLED=${ASA0_AUTO_UPDATE_ENABLED}"
+      - "AUTO_UPDATE_CRON_EXPRESSION=${ASA0_AUTO_UPDATE_CRON_EXPRESSION}"
+      - "AUTO_PAUSE_DEBUG=true"
     volumes:
       - ${HOST_CLUSTER_DIR:-.}/ark_backup:/var/backups
 

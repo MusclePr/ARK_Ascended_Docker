@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [[ "${BASH_SOURCE[0]}" == "$0" ]] && [[ "$(id -un 2>/dev/null || true)" != "arkuser" ]]; then
+    exec sudo -E -u arkuser /opt/manager/manager.sh "$@"
+fi
+
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
@@ -44,6 +48,73 @@ full_status_first_run() {
     return $?
 }
 
+get_eos_token_from_cache() {
+    local creds_file="$EOS_CREDS_FILE"
+    local session_template="$EOS_SESSION_TEMPLATE"
+    local token=""
+
+    if [[ -f "$creds_file" ]]; then
+        token=$(jq -r '.access_token // empty' "$creds_file" 2>/dev/null)
+    fi
+
+    if [[ -z "$token" && -f "$session_template" ]]; then
+        local auth_header
+        auth_header=$(jq -r '.headers.authorization // .headers.Authorization // empty' "$session_template" 2>/dev/null)
+        if [[ "$auth_header" == Bearer\ * ]]; then
+            token="${auth_header#Bearer }"
+        fi
+    fi
+
+    if [[ -z "$token" ]]; then
+        LogError "Cannot find cached EOS token in $creds_file or $session_template. Ensure the server has been fully started."
+        return 1
+    fi
+
+    echo "$token"
+}
+
+check_eos() {
+    # If credentials are not set up yet, attempt to set them up silently.
+    # This is needed for mitmproxy to work out of the box.
+    if [[ ! -f "$EOS_FILE" ]]; then
+        if ! full_status_setup >/dev/null 2>&1; then
+            return 1
+        fi
+    fi
+
+    local creds id ip token res serv
+    creds=$(cut -d, -f1 "$EOS_FILE")
+    id=$(cut -d, -f2 "$EOS_FILE")
+
+    # Recover current ip (with fallback and timeout)
+    ip=$(curl -s --max-time 5 https://ifconfig.me/ip || curl -s --max-time 5 https://api.ipify.org || echo "")
+    if [[ -z "$ip" ]]; then
+        return 1
+    fi
+
+    # Retrieve cached token without requesting a new one
+    token=$(get_eos_token_from_cache) || return 1
+    # Send query to get server(s) registered under public ip
+    res=$(curl -s --max-time 10 -X "POST" "https://api.epicgames.dev/wildcard/matchmaking/v1/${id}/filter"    \
+        -H "Content-Type:application/json"      \
+        -H "Accept:application/json"            \
+        -H "Authorization: Bearer $token"       \
+        -d "{\"criteria\": [{\"key\": \"attributes.ADDRESS_s\", \"op\": \"EQUAL\", \"value\": \"${ip}\"}]}")
+
+    # Check there was no error
+    if [[ "$res" == *"errorCode"* ]]; then
+        return 1
+    fi
+    
+    # Extract correct server based on server port
+    serv=$(echo "$res" | jq -r ".sessions[] | select( .attributes.ADDRESSBOUND_s | contains(\":${SERVER_PORT}\"))")
+    
+    if [[ -n "$serv" && "$serv" != "null" ]]; then
+        return 0
+    fi
+    return 1
+}
+
 full_status_display() {
     creds=$(cut -d, -f1 "$EOS_FILE")
     id=$(cut -d, -f2 "$EOS_FILE")
@@ -51,12 +122,15 @@ full_status_display() {
     # Recover current ip
     ip=$(curl -s https://ifconfig.me/ip)
 
-    # Recover and extract oauth token
-    oauth=$(curl -s -H 'Content-Type: application/x-www-form-urlencoded' -H 'Accept: application/json' -H "Authorization: Basic ${creds}" -X POST https://api.epicgames.dev/auth/v1/oauth/token -d "grant_type=client_credentials&deployment_id=${id}")
-    token=$(echo "$oauth" | jq -r '.access_token')
+    # Recover cached oauth token
+    token=$(get_eos_token_from_cache)
+    if [ -z "$token" ]; then
+        LogError "Cannot find valid cached EOS token."
+        return 1
+    fi
 
     # Send query to get server(s) registered under public ip
-    res=$(curl -s -X "POST" "https://api.epicgames.dev/matchmaking/v1/${id}/filter"    \
+    res=$(curl -s -X "POST" "https://api.epicgames.dev/wildcard/matchmaking/v1/${id}/filter"    \
         -H "Content-Type:application/json"      \
         -H "Accept:application/json"            \
         -H "Authorization: Bearer $token"       \
@@ -153,6 +227,15 @@ status() {
 
     # Check initial status with rcon command
     if health=$(get_health); then
+        if [[ $(get_server_status) == "PAUSED" ]]; then
+            # Since RCON cannot be performed in the PAUSE state, EOS is queried.
+            if [[ "$enable_full_status" == true ]]; then
+                full_status_display
+            else
+                LogInfo "Server is paused."
+            fi
+            return 0
+        fi
         out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
         res=$?
         if [[ $res == 0 ]]; then
@@ -161,8 +244,8 @@ status() {
                 full_status_display
             else            
                 num_players=0
-                if [[ "$out" != "No Players"* ]]; then
-                    num_players=$(echo "$out" | wc -l)
+                if [[ -n "$out" && "$out" != "No Players"* ]]; then
+                    num_players=$(echo "$out" | grep -c '[^[:space:]]')
                 fi
                 echo -e "Players connected:        ${num_players} / ${MAX_PLAYERS:-?}"
                 LogSuccess "Server is up"
@@ -189,7 +272,7 @@ rcon_wait_ready() {
             set_server_status "RUNNING"
             if [ "${CLUSTER_MASTER,,}" == "true" ]; then
                 LogInfo "Signaling ready to cluster."
-                touch "$ALLOWED_FILE" 2>/dev/null || true
+                touch "$MASTER_READY_FILE" 2>/dev/null || true
             fi
             return 0
         fi
@@ -203,7 +286,7 @@ rcon_wait_ready() {
     LogWarn "RCON wait timed out (${timeout}s)."
     if [ "${CLUSTER_MASTER,,}" == "true" ]; then
         LogWarn "Signaling ready anyway to prevent deadlock."
-        touch "$ALLOWED_FILE" 2>/dev/null || true
+        touch "$MASTER_READY_FILE" 2>/dev/null || true
     fi
     return 1
 }
@@ -315,22 +398,68 @@ monitor_gusini() {
 }
 
 start() {
+    autopause_manage_controller "start" || true
+
     if get_health >/dev/null; then
         LogInfo "Server is already running."
         set_server_status "RUNNING"
         return 0
     fi
 
-    # Logic to update SessionName in GameUserSettings.ini
+    # Logic to update SessionName/ServerAdminPassword in GameUserSettings.ini
     GUS_FILE="/opt/arkserver/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini"
-    if [ -f "${GUS_FILE}" ] && [ -n "${SESSION_NAME}" ]; then
-        # tr -d '\r' to handle Windows-style line endings
-        CURRENT_SESSION_NAME=$(grep "^SessionName=" "${GUS_FILE}" | cut -d'=' -f2- | tr -d '\r')
-        if [ "${CURRENT_SESSION_NAME}" != "${SESSION_NAME}" ]; then
-            LogInfo "SessionName change detected in ${GUS_FILE}: '${CURRENT_SESSION_NAME}' -> '${SESSION_NAME}'"
-            set_server_status "WAITING"
-            acquire_session_name_lock
-            sed -i "s/^SessionName=.*/SessionName=${SESSION_NAME}/" "${GUS_FILE}"
+    if [ -f "${GUS_FILE}" ]; then
+        local lock_acquired="false"
+        local escaped_value
+
+        # Keep sed replacement safe for special characters (/,&,\).
+        escape_sed_replacement() {
+            printf '%s' "$1" | sed 's/[\\/&]/\\\\&/g'
+        }
+
+        if [ -n "${SESSION_NAME}" ]; then
+            # tr -d '\r' to handle Windows-style line endings
+            CURRENT_SESSION_NAME=$(grep "^SessionName=" "${GUS_FILE}" | head -n1 | cut -d'=' -f2- | tr -d '\r')
+            if [ "${CURRENT_SESSION_NAME}" != "${SESSION_NAME}" ]; then
+                LogInfo "SessionName change detected in ${GUS_FILE}. Synchronizing GameUserSettings.ini."
+                if [ "${lock_acquired}" != "true" ]; then
+                    set_server_status "WAITING"
+                    acquire_session_name_lock
+                    lock_acquired="true"
+                fi
+                escaped_value=$(escape_sed_replacement "${SESSION_NAME}")
+                if grep -q "^SessionName=" "${GUS_FILE}"; then
+                    sed -i "s/^SessionName=.*/SessionName=${escaped_value}/" "${GUS_FILE}"
+                else
+                    printf '\nSessionName=%s\n' "${SESSION_NAME}" >> "${GUS_FILE}"
+                fi
+            fi
+        fi
+
+        if [ -n "${ARK_ADMIN_PASSWORD}" ]; then
+            local current_admin_password
+            current_admin_password=$(grep "^ServerAdminPassword=" "${GUS_FILE}" | head -n1 | cut -d'=' -f2- | tr -d '\r')
+
+            if [ "${current_admin_password}" != "${ARK_ADMIN_PASSWORD}" ]; then
+                LogInfo "ServerAdminPassword mismatch detected in ${GUS_FILE}. Synchronizing from ARK_ADMIN_PASSWORD."
+                if [ "${lock_acquired}" != "true" ]; then
+                    set_server_status "WAITING"
+                    acquire_session_name_lock
+                    lock_acquired="true"
+                fi
+
+                escaped_value=$(escape_sed_replacement "${ARK_ADMIN_PASSWORD}")
+                if grep -q "^ServerAdminPassword=" "${GUS_FILE}"; then
+                    sed -i "s/^ServerAdminPassword=.*/ServerAdminPassword=${escaped_value}/" "${GUS_FILE}"
+                elif grep -q "^\[ServerSettings\]" "${GUS_FILE}"; then
+                    sed -i "/^\[ServerSettings\]/a ServerAdminPassword=${escaped_value}" "${GUS_FILE}"
+                else
+                    printf '\n[ServerSettings]\nServerAdminPassword=%s\n' "${ARK_ADMIN_PASSWORD}" >> "${GUS_FILE}"
+                fi
+            fi
+        fi
+
+        if [ "${lock_acquired}" == "true" ]; then
             # Wait for RCON in background to release lock once server is fully up
             wait_rcon_ready_and_release_lock &
         fi
@@ -346,12 +475,13 @@ start() {
     monitor_gusini
     nohup /opt/manager/server_start.sh >/dev/null 2>&1 &
     sleep 3
-
     # Wait for RCON before signaling readiness (if master) and setting RUNNING status
     rcon_wait_ready &
 }
 
 stop() {
+    autopause_manage_controller "stop" || true
+
     if ! get_health >/dev/null ; then
         LogError "Server is already stopped."
         return 0
@@ -362,8 +492,8 @@ stop() {
     out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
     local res=$?
     local -i num_players start_t now elapsed target_elapsed
-    if [[ $res == 0 && "$out" != "No Players"* ]]; then
-        num_players=$(echo "$out" | wc -l)
+    if [[ $res == 0 && -n "$out" && "$out" != "No Players"* ]]; then
+        num_players=$(echo "$out" | grep -c '[^[:space:]]')
         if [[ $num_players -gt 0 ]]; then
             LogInfo "Players connected: ${num_players}. Starting 60s countdown."
             local intervals=(60 45 30 20 15 10 9 8 7 6 5 4 3 2 1)
@@ -407,7 +537,7 @@ stop() {
     DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_STOPPING" "in-progress"
     LogAction "STOPPING SERVER" >> "$LOG_PATH"
     set_server_status "STOPPING"
-    rm -f "$ALLOWED_FILE" 2>/dev/null || true
+    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
 
     # Check number of players
     out=$("${RCON_CMDLINE[@]}" DoExit 2>/dev/null)
@@ -456,8 +586,82 @@ stop() {
     set_server_status "STOPPED"
 }
 
+pause() {
+    local pid
+    pid=$(get_pid)
+
+    LogAction "PAUSING SERVER (PID: $pid)"
+
+    if ! get_health >/dev/null ; then
+        LogError "Could not pause, Server is not running."
+        return 1
+    fi
+    
+    local current_status
+    current_status=$(get_server_status)
+    if [[ "$current_status" == "PAUSED" ]] || [[ "$current_status" == "PAUSING" ]]; then
+        LogInfo "Server is already paused or pausing."
+        return 0
+    fi
+
+    LogInfo "Saving world before pause..."
+    if ! saveworld; then
+        LogError "Failed to save world. Aborting pause transition."
+        return 1
+    fi
+
+    set_server_status "PAUSING"
+    
+    # Send SIGSTOP to the main process and all its children
+    # We use -P to catch direct children (Wine/Proton subprocesses)
+    # Also catch other helper processes like wineserver, xalia, crashpad, etc.
+    kill -STOP "$pid"
+    pkill -STOP -P "$pid" 2>/dev/null || true
+    pkill -STOP -u arkuser -f "(wineserver|services.exe|winedevice.exe|svchost.exe|plugplay.exe|rpcss.exe|xalia.exe|crashpad_handler.exe)" 2>/dev/null || true
+    
+    DISCORD_MSG_PAUSED="${DISCORD_MSG_PAUSED:-The Server has been paused}"
+    DiscordMessage "Pause $SESSION_NAME" "$DISCORD_MSG_PAUSED" "warn"
+    set_server_status "PAUSED"
+    autopause_manage_knockd "start" || true
+    LogSuccess "Server paused."
+}
+
+unpause() {
+    local pid
+    pid=$(get_pid)
+    if [[ -z "$pid" ]]; then
+        LogError "Server process not found."
+        return 1
+    fi
+
+    local current_status
+    current_status=$(get_server_status)
+    if [[ "$current_status" == "RUNNING" ]]; then
+        autopause_mark_awake || true
+        autopause_manage_knockd "stop" || true
+        return 0
+    fi
+
+    LogAction "RESUMING SERVER (PID: $pid)"
+    set_server_status "RESUMING"
+    
+    # Resume the main process and its children
+    # We use -P to catch direct children (Wine/Proton subprocesses)
+    # Also resume other helper processes like wineserver, xalia, crashpad, etc.
+    kill -CONT "$pid"
+    pkill -CONT -P "$pid" 2>/dev/null || true
+    pkill -CONT -u arkuser -f "(wineserver|services.exe|winedevice.exe|svchost.exe|plugplay.exe|rpcss.exe|xalia.exe|crashpad_handler.exe)" 2>/dev/null || true
+    
+    DISCORD_MSG_RESUMED="${DISCORD_MSG_RESUMED:-The Server has been resumed}"
+    DiscordMessage "Resume $SESSION_NAME" "$DISCORD_MSG_RESUMED" "success"
+    set_server_status "RUNNING"
+    autopause_mark_awake || true
+    autopause_manage_knockd "stop" || true
+    LogSuccess "Server resumed."
+}
+
 restart() {
-    DISCORD_MSG_RESTARTING="${DISCORD_MSG_RESTARTING:-Restarting the Server}"
+    DISCORD_MSG_RESTARTING="${DISCORD_MSG_RESTARTING:-The Server is restarting}"
     DiscordMessage "Restart $SESSION_NAME" "$DISCORD_MSG_RESTARTING" "in-progress"
     LogAction "RESTARTING SERVER" >> "$LOG_PATH"
     stop "$1"
@@ -533,8 +737,8 @@ update() {
     done
 
     # Always revoke start permission at the beginning of an update cycle.
-    # This prevents slaves from starting while we are checking/updating shared volumes.
-    rm -f "$ALLOWED_FILE" 2>/dev/null || true
+    # This prevents non-master nodes from starting while we are checking/updating shared volumes.
+    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
 
     local update_rc=0
     update_required
@@ -552,15 +756,18 @@ update() {
 
     local request_started_epoch
     request_started_epoch=$(date +%s)
-    # Use helper to request/initiate cluster maintenance and wait for slaves
-    enter_maintenance "$request_started_epoch"
+    # Use helper to request/initiate cluster maintenance and wait for all cluster nodes.
+    if ! enter_maintenance stop "$request_started_epoch"; then
+        LogError "Cluster maintenance stop failed. Aborting update."
+        exit_maintenance
+        return 1
+    fi
 
     trap 'if [[ "${UPDATE_KEEP_LOCK:-}" == "true" ]]; then rm -f "$UPDATING_FLAG"; else rm -f "$UPDATING_FLAG"; rm -f "$LOCK_FILE"; rm -f "$MAINTENANCE_REQUEST_FILE"; fi' EXIT
 
     DiscordMessage "Update" "Updating Server now" "warn"
     LogAction "UPDATING SERVER"
     set_server_status "UPDATING"
-    stop --saveworld
 
     touch "$UPDATING_FLAG"
     rm "/opt/arkserver/steamapps/appmanifest_${ASA_APPID}.acf"
@@ -623,7 +830,7 @@ update() {
     fi
     # If we are skipping start (or dry-run), do not attempt to start/wait for RCON here.
     if [[ "$skip_start" != true ]]; then
-        # Use master helper to start, wait for RCON/ALLOWED_FILE, then release locks
+        # Use master helper to start, wait for RCON/MASTER_READY_FILE, then release locks
         master_release_after_start 900
     else
         LogInfo "Skipping automatic start/wait (skip_start=${skip_start})"
@@ -646,11 +853,42 @@ main() {
         "status")
             status "$option"
             ;;
+        "check-eos")
+            if check_eos; then
+                echo "VISIBLE"
+                exit 0
+            else
+                echo "NOT_VISIBLE"
+                exit 1
+            fi
+            ;;
         "start")
             start
             ;;
         "stop")
             stop "$option"
+            ;;
+        "pause")
+            if [[ -z "$option" ]]; then
+                /opt/manager/manager.sh --request pause
+                exit $?
+            elif [[ "$option" == "--apply" ]]; then
+                pause
+            else
+                LogError "Invalid option for pause: ${option}. Use --apply or no option."
+                exit 1
+            fi
+            ;;
+        "unpause")
+            if [[ -z "$option" ]]; then
+                /opt/manager/manager.sh --request unpause
+                exit $?
+            elif [[ "$option" == "--apply" ]]; then
+                unpause
+            else
+                LogError "Invalid option for unpause: ${option}. Use --apply or no option."
+                exit 1
+            fi
             ;;
         "restart")
             restart "$option"
@@ -686,7 +924,7 @@ main() {
             fi
             ;;
         *)
-            LogError "Invalid action. Supported actions: status, start, stop, restart, saveworld, rcon, update, backup, restore."
+            LogError "Invalid action. Supported actions: status, start, stop, pause, unpause, restart, saveworld, rcon, update, backup, restore."
             exit 1
             ;;
     esac
@@ -695,12 +933,60 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     # Called directly: run CLI main
     if [[ $# -lt 1 ]]; then
-        echo "Usage: $0 <action> [options]"
+        echo "Usage: $0 [--request] <action> [options]"
         echo "  update options: --no-start"
+        echo "  pause/unpause options: --apply (run directly without request worker)"
         echo "  stop/restart options: --saveworld"
         echo "  restore usage: restore [archive]"
-        echo "  Actions: status, start, stop, restart, saveworld, rcon, update, backup, restore."
+        echo "  Actions: status, start, stop, pause, unpause, restart, saveworld, rcon, update, backup, restore."
         exit 1
+    fi
+
+    if [[ "$1" == "--request" ]]; then
+        action="$2"
+        option="${3:-}"
+        target_port=""
+
+        # backup/restore are cluster-scoped and must flow through CLUSTER_REQUEST_JSON.
+        # Prevent accidental enqueue into per-server request worker queue.
+        case "$action" in
+            "backup"|"restore")
+                LogError "Action '$action' is cluster-scoped and cannot be used with --request. Use: manager $action"
+                exit 2
+                ;;
+        esac
+
+        case "$action" in
+            "pause"|"unpause")
+                target_port="${SERVER_PORT}"
+                ;;
+        esac
+        
+        # Build JSON payload and write atomically
+        mkdir -p "$(dirname "${REQUEST_JSON}")" 2>/dev/null || true
+        if [[ -f "$REQUEST_JSON" ]]; then
+            LogError "A request already exists: $REQUEST_JSON. Please wait for it to be processed or remove it manually."
+            exit 3
+        fi
+
+        req_id="$(date +%s)-$$-$RANDOM"
+        payload=$(mktemp)
+        jq -n \
+            --arg action "$action" \
+            --arg option "$option" \
+            --arg request_id "$req_id" \
+            --arg target_port "$target_port" \
+            '{action:$action,option:$option,request_id:$request_id,target_port:($target_port | if . == "" then null else . end)}' > "$payload"
+        
+        if ! create_request_json "$action" "$payload"; then
+            LogError "Failed to create request (busy)."
+            rm -f "$payload"
+            exit 4
+        fi
+        rm -f "$payload"
+        LogSuccess "Request created: $action $option"
+        wait_for_response "$req_id"
+        exit $?
     fi
 
     main "$@"

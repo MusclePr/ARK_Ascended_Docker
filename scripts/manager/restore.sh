@@ -42,9 +42,9 @@ Restore_request() {
         fi
     fi
 
-    mkdir -p "$SIGNALS_DIR" 2>/dev/null || true
-    if [[ -f "$REQUEST_JSON" ]]; then
-        LogError "A request already exists: $REQUEST_JSON. Please wait for it to be processed or remove it manually."
+    mkdir -p "${CLUSTER_SIGNALS_DIR}" 2>/dev/null || true
+    if [[ -f "$CLUSTER_REQUEST_JSON" ]]; then
+        LogError "A cluster request already exists: $CLUSTER_REQUEST_JSON. Please wait for it to be processed or remove it manually."
         return 3
     fi
 
@@ -54,48 +54,41 @@ Restore_request() {
     req_id="$(date +%s)-$$-$RANDOM"
     payload=$(mktemp)
     jq -n --arg action "restore" --arg request_id "$req_id" --arg archive "$archive" --arg requested_by "${USER:-$(whoami 2>/dev/null || echo unknown)}" --arg timestamp "$ts" '{action:$action,request_id:$request_id,archive:$archive,requested_by:$requested_by,timestamp:$timestamp}' >"$payload"
-    if ! create_request_json "restore" "$payload"; then
-        LogError "Failed to create restore request (busy)."
+    if ! create_cluster_request_json "$payload"; then
+        LogError "Failed to create cluster restore request (busy)."
         rm -f "$payload"
         return 4
     fi
     rm -f "$payload"
-    LogSuccess "Restore request created: $REQUEST_JSON"
-    wait_for_response "$req_id"
+    LogSuccess "Cluster restore request created: $CLUSTER_REQUEST_JSON"
+    wait_for_cluster_response "$req_id"
     return $?
 }
 
 Restore_apply() {
+    LogAction "PREPAIR CLUSTER RESTORE"
+
     local archive="$1"
     if [[ -z "$archive" ]]; then
         LogError "No archive specified for restore."
         return 1
     fi
 
-    # Enter cluster maintenance mode (requests cluster-wide stop)
-    local request_started_epoch
-    request_started_epoch=$(date +%s)
-    enter_maintenance stop "$request_started_epoch"
-
-    LogInfo "Stopping local server for restore..."
-    # Stop this node gracefully
-    manager stop --saveworld
-
-    # Wait for server to actually stop (timeout 120s = stop 60s + countdown 60s)
-    local waited=0
-    local stop_timeout=120
-    while get_pid >/dev/null && [ $waited -lt $stop_timeout ]; do
-        sleep 1
-        waited=$((waited+1))
-    done
-
-    if get_pid >/dev/null; then
-        LogError "Server did not stop after ${stop_timeout}s. Aborting restore."
-        exit_maintenance
-        trap - EXIT
+    if ! ensure_server_awake_for_operation "restore"; then
+        LogError "Cannot proceed with restore because server wake/unpause failed."
         return 1
     fi
 
+    # Enter cluster maintenance mode (requests cluster-wide stop)
+    local request_started_epoch
+    request_started_epoch=$(date +%s)
+    if ! enter_maintenance stop "$request_started_epoch"; then
+        LogError "Cluster maintenance stop failed. Aborting restore."
+        exit_maintenance
+        return 1
+    fi
+
+    LogAction "CLUSTER RESTORE"
     LogInfo "Restoring backup: $archive"
     set_server_status "RESTORING"
 
