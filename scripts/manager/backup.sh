@@ -8,9 +8,9 @@ set -euo pipefail
 source "/opt/manager/helper.sh"
 
 Backup_request() {
-    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
-    if [[ -f "$REQUEST_JSON" ]]; then
-        LogError "A request already exists: $REQUEST_JSON. Please wait for it to be processed or remove it manually."
+    mkdir -p "${CLUSTER_SIGNALS_DIR}" 2>/dev/null || true
+    if [[ -f "$CLUSTER_REQUEST_JSON" ]]; then
+        LogError "A cluster request already exists: $CLUSTER_REQUEST_JSON. Please wait for it to be processed or remove it manually."
         return 3
     fi
 
@@ -20,14 +20,14 @@ Backup_request() {
     req_id="$(date +%s)-$$-$RANDOM"
     payload=$(mktemp)
     jq -n --arg action "backup" --arg request_id "$req_id" --arg requested_by "${USER:-$(whoami 2>/dev/null || echo unknown)}" --arg timestamp "$ts" '{action:$action,request_id:$request_id,requested_by:$requested_by,timestamp:$timestamp}' > "$payload"
-    if ! create_request_json "backup" "$payload"; then
-        LogError "Failed to create backup request (busy)."
+    if ! create_cluster_request_json "$payload"; then
+        LogError "Failed to create cluster backup request (busy)."
         rm -f "$payload"
         return 4
     fi
     rm -f "$payload"
-    LogSuccess "Backup request created: $REQUEST_JSON"
-    wait_for_response "$req_id"
+    LogSuccess "Cluster backup request created: $CLUSTER_REQUEST_JSON"
+    wait_for_cluster_response "$req_id"
     return $?
 }
 
@@ -35,6 +35,7 @@ Backup_request() {
 Backup_create() {
     local path="/var/backups"
     local tmp_path="/opt/arkserver/tmp/backup_$$"
+    local post_backup_health
 
     LogInfo "Creating backup. Backups are saved in your backup volume."
     set_server_status "BACKUP_SAVE"
@@ -128,7 +129,15 @@ Backup_create() {
     LogSuccess "Backup created" >> "$LOG_PATH"
 
     rm -R "$tmp_path"
-    if get_health >/dev/null; then set_server_status "RUNNING"; fi
+    post_backup_health="$(get_health 2>/dev/null || true)"
+    case "$post_backup_health" in
+        UP)
+            set_server_status "RUNNING"
+            ;;
+        PAUSED)
+            set_server_status "PAUSED"
+            ;;
+    esac
 
     if [[ "${OLD_BACKUP_DAYS}" =~ ^[0-9]+$ ]]; then
         LogAction "Removing old Backups"
@@ -140,12 +149,18 @@ Backup_create() {
 
 # Apply backup immediately (called by worker/monitor)
 Backup_apply() {
+    LogAction "PREPAIR CLUSTER BACKUP"
     # Enter cluster maintenance save mode (requests cluster-wide save)
-    LogInfo "Backup request started. Initiating cluster maintenance and waiting for slaves."
+    LogInfo "Backup request started. Initiating cluster maintenance and waiting for cluster nodes."
     local request_started_epoch
     request_started_epoch=$(date +%s)
-    enter_maintenance save "$request_started_epoch"
+    if ! enter_maintenance save "$request_started_epoch"; then
+        LogError "Cluster maintenance save failed. Aborting backup."
+        exit_maintenance
+        return 1
+    fi
 
+    LogAction "CLUSTER BACKUP"
     LogInfo "Performing create backup now..."
     if ! Backup_create; then
         rc=$?

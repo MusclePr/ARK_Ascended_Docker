@@ -2,3 +2,4 @@
 *.iml
 .*
 /ark_*
+__pycache__

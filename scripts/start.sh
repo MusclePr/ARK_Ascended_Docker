@@ -3,19 +3,55 @@
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
-mkdir -p "$SIGNALS_DIR"
+mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR"
 
-# Clean up old status files for this port on startup
-rm -f "${SIGNALS_DIR}/status_${SERVER_PORT}" 2>/dev/null || true
+# Clean up old status file for this server on startup
+rm -f "${SERVER_SIGNALS_DIR}/status" 2>/dev/null || true
+
+# Clean up old unused request files for this server only
+rm -rf "${SERVER_SIGNALS_DIR}/request.lock" 2>/dev/null || true
+find "${SERVER_SIGNALS_DIR}" -maxdepth 1 -type f -name "request*.json" -delete 2>/dev/null || true
+
+# Start request worker early so maintenance requests can be ACKed even during startup/update phase.
+if [[ -x "/opt/manager/request_worker.sh" ]]; then
+    /opt/manager/request_worker.sh &
+    REQUEST_WORKER_PID=$!
+    LogInfo "Started request_worker early (pid=${REQUEST_WORKER_PID})"
+fi
+
+# Start cluster request worker early on master node.
+if [[ "${CLUSTER_MASTER,,}" == "true" ]] && [[ -x "/opt/manager/cluster_request_worker.sh" ]]; then
+    /opt/manager/cluster_request_worker.sh &
+    CLUSTER_REQUEST_WORKER_PID=$!
+    LogInfo "Started cluster_request_worker early (pid=${CLUSTER_REQUEST_WORKER_PID})"
+fi
 
 master_lock_acquired=false
 
 on_shutdown_signal() {
     LogWarn "Received shutdown signal. Exiting..."
-    # Kill background monitor and cron if they are running
-    [[ -n "$REQUEST_WORKER_PID" ]] && kill "$REQUEST_WORKER_PID" 2>/dev/null || true
-    [[ -n "$MONITOR_PID" ]] && kill "$MONITOR_PID" 2>/dev/null || true
-    [[ -n "$CRON_PID" ]] && kill "$CRON_PID" 2>/dev/null || true
+    
+    # If server is paused (SIGSTOP'd), it won't receive SIGTERM.
+    # We must SIGCONT it first to let it process the shutdown command.
+    if [[ -f "${STATUS_FILE}" ]]; then
+        local current_status
+        current_status=$(cat "${STATUS_FILE}" 2>/dev/null || true)
+        if [[ "${current_status}" == "PAUSED" ]]; then
+            LogInfo "Server is paused. Resuming to allow graceful shutdown..."
+            manager unpause --apply || true
+        fi
+    fi
+
+    # Kill background workers and cron if they are running
+    if [[ -n "${REQUEST_WORKER_PID:-}" ]]; then
+        kill "$REQUEST_WORKER_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${CLUSTER_REQUEST_WORKER_PID:-}" ]]; then
+        kill "$CLUSTER_REQUEST_WORKER_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${CRON_PID:-}" ]]; then
+        kill "$CRON_PID" 2>/dev/null || true
+    fi
     manager stop --saveworld || true
     exit 0
 }
@@ -32,7 +68,7 @@ trap cleanup_master_lock EXIT
 wait_for_master_allowed() {
     LogInfo "Waiting for cluster master to finish update-check..."
     set_server_status "WAIT_MASTER"
-    while [[ ! -d "$MASTER_LOCK_DIR" || ! -f "$ALLOWED_FILE" ]]; do
+    while [[ ! -d "$MASTER_LOCK_DIR" || ! -f "$MASTER_READY_FILE" ]]; do
         if ( [[ -f "$MAINTENANCE_REQUEST_FILE" ]] && grep -q "stop" "$MAINTENANCE_REQUEST_FILE" 2>/dev/null ) || [[ -f "$LOCK_FILE" ]]; then
             touch "$WAITING_FILE"
         else
@@ -79,13 +115,17 @@ wait_for_valid_installation() {
 mkdir -p "${STEAM_COMPAT_DATA_PATH}"
 
 if [[ "${CLUSTER_MASTER,,}" == "true" ]]; then
-    # Revoke permission early so slaves never start using a stale flag from a previous run.
-    rm -f "$ALLOWED_FILE" 2>/dev/null || true
+    # Revoke permission early so non-master nodes never start using a stale flag from a previous run.
+    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
+    # Reset session name lock in case of previous crash
+    rmdir "${SESSION_NAME_LOCK}" 2>/dev/null || true
+    
     acquire_master_lock_or_exit
+    initialize_cluster_ports
     LogInfo "Running update check (and update if needed) as cluster master..."
     manager update --no-start
 else
-    LogInfo "No SLAVE_PORTS, acting as cluster slave"
+    LogInfo "Acting as cluster node (non-master)"
     wait_for_master_allowed
 fi
 
@@ -140,73 +180,20 @@ mkdir -p "${LOG_PATH%/*}" && echo "" > "${LOG_PATH}"
 # Start server through manager
 manager start &
 
-Slaves_check_maintenance() {
-    local rcon_listening=false
-    if ss -ltn 2>/dev/null | grep -qE "[:\[]${RCON_PORT}\b"; then
-        rcon_listening=true
-    fi
-    local req_content=""
-    if [[ -f "$MAINTENANCE_REQUEST_FILE" ]]; then
-        req_content=$(cat "$MAINTENANCE_REQUEST_FILE")
-    fi
-
-    if [[ -f "$LOCK_FILE" ]] || [[ "$req_content" == *"stop"* ]]; then
-        # Mark that this server is waiting for maintenance and stop safely
-        touch "$WAITING_FILE"
-        set_server_status "MAINTENANCE"
-        if get_health >/dev/null; then
-            if [[ "$rcon_listening" == true ]]; then
-                LogWarn "Cluster maintenance detected. Stopping server..."
-                touch "$RESUME_FLAG"
-                manager stop --saveworld
-            else
-                LogInfo "Cluster maintenance detected, but RCON is not listening yet. Skip stop --saveworld."
-            fi
-        fi
-    elif [[ "$req_content" == *"save"* ]]; then
-        if [[ ! -f "$WAITING_FILE" ]]; then
-            LogInfo "Cluster maintenance detected (save)."
-            if get_health >/dev/null && [[ "$rcon_listening" == true ]]; then
-                saveworld
-            fi
-            touch "$WAITING_FILE"
-        fi
-    else
-        rm -f "$WAITING_FILE" 2>/dev/null || true
-        if [[ -f "$RESUME_FLAG" ]]; then
-            LogInfo "Maintenance finished. Resuming server..."
-            rm -f "$RESUME_FLAG"
-            manager start
-        fi
-    fi
-}
-
-if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
-    (
-        while true; do
-            Slaves_check_maintenance || true
-            sleep "${POLL_INTERVAL:-5}"
-        done
-    ) &
-    MONITOR_PID=$!
-fi
-
-# Start request worker to handle unified JSON requests (if present) - Master only
-if [[ "${CLUSTER_MASTER,,}" == "true" ]] && [[ -x "/opt/manager/request_worker.sh" ]]; then
-    /opt/manager/request_worker.sh &
-    REQUEST_WORKER_PID=$!
-    LogInfo "Started request_worker (pid=${REQUEST_WORKER_PID})"
-fi
-
-
 
 # Function to process log lines for Discord notifications
 process_log_line() {
     local line
     line=$(echo -n "$1" | tr -d '\r\n')
     local -r log_head_regex='^\[[0-9]{4}\.[0-9]{2}\.[0-9]{2}\-[0-9]{2}\.[0-9]{2}\.[0-9]{2}:[0-9]{3}\]\[[0-9 ]{3}\](.+)'
+    local -r startup_regex='Server has completed startup'
     if [[ "$line" =~ $log_head_regex ]]; then
         line="${BASH_REMATCH[1]}"
+        if [[ "$line" =~ $startup_regex ]]; then
+            DISCORD_MSG_UP="${DISCORD_MSG_UP:-The Server is up}"
+            DiscordMessage "Started $SESSION_NAME" "${DISCORD_MSG_UP}" "success"
+            LogSuccess "Server is up."
+        fi
         local -r log_body_regex='^[0-9]{4}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}: (.+)$'
         if [[ "$line" =~ $log_body_regex ]]; then
             line="${BASH_REMATCH[1]}"
@@ -225,8 +212,8 @@ process_log_line() {
                     platform_msg=" / Platform: \`${platform}\`"
                 fi
                 local player_msg
-                DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s joined"}"
-                player_msg=$(printf "$DISCORD_MSG_JOINED" "$player")
+                DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s has joined"}"
+                player_msg="${DISCORD_MSG_JOINED//%s/$player}"
                 DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "joined"
             elif [[ "$line" =~ $left_regex ]]; then
                 local player="${BASH_REMATCH[1]}"
@@ -237,8 +224,8 @@ process_log_line() {
                     platform_msg=" / Platform: \`${platform}\`"
                 fi
                 local player_msg
-                DISCORD_MSG_LEFT="${DISCORD_MSG_LEFT:-"%s left"}"
-                player_msg=$(printf "$DISCORD_MSG_LEFT" "$player")
+                DISCORD_MSG_LEFT="${DISCORD_MSG_LEFT:-"%s has left"}"
+                player_msg="${DISCORD_MSG_LEFT//%s/$player}"
                 DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "left"
             elif [[ "$line" =~ $cheat_regex ]]; then
                 local command="${BASH_REMATCH[1]}"
