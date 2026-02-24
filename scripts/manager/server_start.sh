@@ -5,7 +5,16 @@ source "/opt/manager/helper.sh"
 
 # Server main options
 # shellcheck disable=SC2153
-cmd="${SERVER_MAP}?SessionName=\"${SESSION_NAME}\"?ServerPassword=${SERVER_PASSWORD}"
+# Parse SERVER_MAP for optional MapModID (format: MapName:ModID)
+if [[ "$SERVER_MAP" == *":"* ]]; then
+    MAP_NAME="${SERVER_MAP%%:*}"
+    MAP_MOD_ID="${SERVER_MAP#*:}"
+else
+    MAP_NAME="$SERVER_MAP"
+    MAP_MOD_ID=""
+fi
+
+cmd="${MAP_NAME}?SessionName=\"${SESSION_NAME}\"?ServerPassword=${SERVER_PASSWORD}"
 
 if [ -n "${ARK_ADMIN_PASSWORD}" ]; then
     cmd="${cmd}?ServerAdminPassword=\"${ARK_ADMIN_PASSWORD}\""
@@ -28,6 +37,10 @@ cmd="${cmd}${ARK_EXTRA_OPTS}"
 # Server dash options
 
 ark_flags=()
+
+if [ -n "$MAP_MOD_ID" ]; then
+    ark_flags+=("-MapModID=${MAP_MOD_ID}")
+fi
 
 # Install mods
 if [ -n "$MODS" ]; then
