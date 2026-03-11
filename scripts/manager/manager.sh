@@ -487,6 +487,17 @@ stop() {
         return 0
     fi
 
+    local health_before_stop
+    health_before_stop=$(get_health 2>/dev/null || true)
+    if [[ "$health_before_stop" == "PAUSED" ]]; then
+        LogInfo "Server is paused. Resuming before stop."
+        if ! unpause; then
+            LogWarn "Failed to resume paused server before stop. Continuing stop workflow."
+        else
+            sleep 2
+        fi
+    fi
+
     # Countdown if players are present
     local out
     out=$("${RCON_CMDLINE[@]}" ListPlayers 2>/dev/null)
@@ -537,7 +548,9 @@ stop() {
     DiscordMessage "Stopping $SESSION_NAME" "$DISCORD_MSG_STOPPING" "in-progress"
     LogAction "STOPPING SERVER" >> "$LOG_PATH"
     set_server_status "STOPPING"
-    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
+    if [[ "${CLUSTER_MASTER,,}" == "true" ]]; then
+        rm -f "$MASTER_READY_FILE" 2>/dev/null || true
+    fi
 
     # Check number of players
     out=$("${RCON_CMDLINE[@]}" DoExit 2>/dev/null)

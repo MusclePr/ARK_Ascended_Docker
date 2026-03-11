@@ -81,6 +81,15 @@ while true; do
                 ;;
             "stop")
                 opt=$(jq -r '.option // empty' "$procf" 2>/dev/null || true)
+                health=$(get_health 2>/dev/null || true)
+                if [[ "$health" == "PAUSED" ]]; then
+                    LogInfo "Server is paused. Resuming before processing stop request."
+                    if ! /opt/manager/manager.sh unpause --apply; then
+                        LogWarn "Failed to resume paused server. Continuing stop request processing."
+                    else
+                        sleep 2
+                    fi
+                fi
                 if /opt/manager/manager.sh stop "$opt"; then
                     mark_request_status "$procf" "done"
                 else
