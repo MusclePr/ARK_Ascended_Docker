@@ -673,6 +673,87 @@ unpause() {
     LogSuccess "Server resumed."
 }
 
+autopause_disable() {
+    if autopause_disable_apply; then
+        LogSuccess "AUTO_PAUSE has been disabled for this node."
+        return 0
+    fi
+    LogError "Failed to disable AUTO_PAUSE for this node."
+    return 1
+}
+
+autopause_enable() {
+    if autopause_enable_apply; then
+        LogSuccess "AUTO_PAUSE has been enabled for this node."
+        return 0
+    fi
+    LogError "Failed to enable AUTO_PAUSE for this node."
+    return 1
+}
+
+autopause_status_cmd() {
+    local auto_pause_enabled="FALSE"
+    if autopause_env_enabled; then
+        auto_pause_enabled="TRUE"
+    fi
+    echo "AUTO_PAUSE_ENABLED: ${auto_pause_enabled}"
+
+    local server_status
+    server_status=$(get_server_status)
+
+    if ! autopause_env_enabled; then
+        echo "STATUS: ${server_status}, Disabled by configuration."
+        return 0
+    fi
+
+    if autopause_is_disabled; then
+        echo "STATUS: RUNNING, Disabled by user."
+        return 0
+    fi
+
+    if [[ "$server_status" == "PAUSED" && -f "$AUTO_PAUSE_SLEEP_FLAG" ]]; then
+        local sleep_since sleep_since_local elapsed_sec elapsed_text
+        sleep_since=$(autopause_sleep_since_epoch)
+        if [[ -n "$sleep_since" ]]; then
+            sleep_since_local=$(autopause_format_epoch_local "$sleep_since")
+            elapsed_sec=$(( $(date +%s) - sleep_since ))
+            if (( elapsed_sec < 0 )); then
+                elapsed_sec=0
+            fi
+            elapsed_text=$(autopause_format_elapsed "$elapsed_sec")
+            echo "STATUS: PAUSED, Since ${sleep_since_local} (${elapsed_text} elapsed)"
+        else
+            echo "STATUS: PAUSED"
+        fi
+        return 0
+    fi
+
+    if [[ "$server_status" != "RUNNING" ]]; then
+        echo "STATUS: ${server_status}"
+        return 0
+    fi
+
+    local players
+    players=$(autopause_player_count)
+    if [[ "$players" =~ ^[0-9]+$ ]] && (( players > 0 )); then
+        echo "STATUS: RUNNING, ${players} logged-in players."
+        return 0
+    fi
+
+    if [[ "$players" == "-1" ]]; then
+        echo "STATUS: RUNNING, players unknown (RCON unavailable)."
+        return 0
+    fi
+
+    local seconds_left
+    seconds_left=$(autopause_seconds_until_pause)
+    if [[ "$seconds_left" =~ ^[0-9]+$ ]] && (( seconds_left > 0 )); then
+        echo "STATUS: RUNNING, 0 logged-in players, The server will pausing in ${seconds_left} seconds."
+    else
+        echo "STATUS: RUNNING, 0 logged-in players."
+    fi
+}
+
 restart() {
     DISCORD_MSG_RESTARTING="${DISCORD_MSG_RESTARTING:-The Server is restarting}"
     DiscordMessage "Restart $SESSION_NAME" "$DISCORD_MSG_RESTARTING" "in-progress"
@@ -903,6 +984,31 @@ main() {
                 exit 1
             fi
             ;;
+        "autopause-disable")
+            if [[ -z "$option" ]]; then
+                /opt/manager/manager.sh --request autopause-disable
+                exit $?
+            elif [[ "$option" == "--apply" ]]; then
+                autopause_disable
+            else
+                LogError "Invalid option for autopause-disable: ${option}. Use --apply or no option."
+                exit 1
+            fi
+            ;;
+        "autopause-enable")
+            if [[ -z "$option" ]]; then
+                /opt/manager/manager.sh --request autopause-enable
+                exit $?
+            elif [[ "$option" == "--apply" ]]; then
+                autopause_enable
+            else
+                LogError "Invalid option for autopause-enable: ${option}. Use --apply or no option."
+                exit 1
+            fi
+            ;;
+        "autopause-status")
+            autopause_status_cmd
+            ;;
         "restart")
             restart "$option"
             ;;
@@ -937,7 +1043,7 @@ main() {
             fi
             ;;
         *)
-            LogError "Invalid action. Supported actions: status, start, stop, pause, unpause, restart, saveworld, rcon, update, backup, restore."
+            LogError "Invalid action. Supported actions: status, start, stop, pause, unpause, autopause-disable, autopause-enable, autopause-status, restart, saveworld, rcon, update, backup, restore."
             exit 1
             ;;
     esac
@@ -948,10 +1054,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     if [[ $# -lt 1 ]]; then
         echo "Usage: $0 [--request] <action> [options]"
         echo "  update options: --no-start"
-        echo "  pause/unpause options: --apply (run directly without request worker)"
+        echo "  pause/unpause/autopause-disable/autopause-enable options: --apply (run directly without request worker)"
         echo "  stop/restart options: --saveworld"
         echo "  restore usage: restore [archive]"
-        echo "  Actions: status, start, stop, pause, unpause, restart, saveworld, rcon, update, backup, restore."
+        echo "  Actions: status, start, stop, pause, unpause, autopause-disable, autopause-enable, autopause-status, restart, saveworld, rcon, update, backup, restore."
         exit 1
     fi
 
@@ -971,6 +1077,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 
         case "$action" in
             "pause"|"unpause")
+                target_port="${SERVER_PORT}"
+                ;;
+            "autopause-disable"|"autopause-enable")
                 target_port="${SERVER_PORT}"
                 ;;
         esac

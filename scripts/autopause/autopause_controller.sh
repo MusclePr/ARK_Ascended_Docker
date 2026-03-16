@@ -8,6 +8,7 @@ AUTO_PAUSE_POLL_SEC="${AUTO_PAUSE_POLL_SEC:-2}"
 AUTO_PAUSE_IDLE_MINUTES="${AUTO_PAUSE_IDLE_MINUTES:-3}"
 AUTO_PAUSE_IDLE_SEC=$((AUTO_PAUSE_IDLE_MINUTES * 60))
 EOS_HEARTBEAT_SCRIPT="${EOS_HEARTBEAT_SCRIPT:-/opt/autopause/eos_heartbeat.py}"
+AUTO_PAUSE_DISABLED_LOCK="${AUTO_PAUSE_DISABLED_LOCK:-${AUTO_PAUSE_WORK_DIR}/disabled.lock}"
 
 mkdir -p "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
 
@@ -205,11 +206,51 @@ trap 'exit_sleep' SIGUSR1
 trap '' SIGHUP
 
 loop_count=0
+disabled_logged=false
+disabled_applied=false
 while true; do
     loop_count=$((loop_count + 1))
     if [[ $((loop_count % 120)) -eq 0 ]]; then
         # 10分おきに生存ログを出す (5sec * 120)
         log_line "autopause: controller heartbeat (port=${SERVER_PORT})"
+    fi
+
+    if [[ -f "$AUTO_PAUSE_DISABLED_LOCK" ]]; then
+        if [[ "$disabled_logged" == "false" ]]; then
+            log_line "autopause: disabled lock detected. Suspended AUTO_PAUSE transitions."
+            disabled_logged=true
+        fi
+
+        # Apply disable side effects once so file-only operations behave like manager autopause-disable.
+        if [[ "$disabled_applied" == "false" ]]; then
+            /opt/autopause/autopause_knockd.sh stop >/dev/null 2>&1 || true
+
+            current_health=$(get_health 2>/dev/null || true)
+            if [[ "$current_health" == "PAUSED" ]]; then
+                log_line "autopause: disabled lock detected while paused. Unpausing server."
+                manager unpause --apply || log_line "autopause: ERROR: manager unpause failed while applying disabled lock"
+            fi
+
+            disabled_applied=true
+        fi
+
+        if [[ -f "$AUTO_PAUSE_SLEEP_FLAG" ]]; then
+            log_line "autopause: disabled lock detected while sleeping. Waking server."
+            exit_sleep || true
+        else
+            heartbeat_stop_if_running || true
+            rm -f "$AUTO_PAUSE_WAKE_FLAG" 2>/dev/null || true
+        fi
+
+        sleep "$AUTO_PAUSE_POLL_SEC"
+        continue
+    fi
+
+    if [[ "$disabled_logged" == "true" ]]; then
+        log_line "autopause: disabled lock cleared. Resuming AUTO_PAUSE transitions."
+        touch_last_active "disabled lock clear"
+        disabled_logged=false
+        disabled_applied=false
     fi
 
     if [[ -f "$AUTO_PAUSE_WAKE_FLAG" ]]; then

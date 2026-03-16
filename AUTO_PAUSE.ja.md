@@ -72,6 +72,15 @@
 
 # 実装プラン
 
+## ノード単位のAUTO_PAUSE無効化
+
+- 無効化状態は `AUTO_PAUSE_WORK_DIR` 配下の `disabled.lock` で管理します。
+	- 実体パス: `/opt/arkserver/.signals/server_<port>/autopause/disabled.lock`
+- `disabled.lock` の作成/削除だけで、対象 server_<port> の AUTO_PAUSE を無効化/有効化できます。
+- `disabled.lock` が存在する間は、AUTO_PAUSE 起因の pause/wake を停止します。
+- sleep 中に `disabled.lock` が作成された場合は、コントローラーが wake 遷移を行い RUNNING を維持します。
+- 操作は `manager autopause-disable` / `manager autopause-enable` / `manager autopause-status` を使用します。
+
 ## 1. 代理送信エージェント
 
 - `scripts/autopause/eos_heartbeat.py` は、自律送信クライアントとして動作する。
