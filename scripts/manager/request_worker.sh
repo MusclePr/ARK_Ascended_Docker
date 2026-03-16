@@ -79,6 +79,20 @@ while true; do
                     mark_request_status "$procf" "failed"
                 fi
                 ;;
+            "autopause-disable")
+                if /opt/manager/manager.sh autopause-disable --apply; then
+                    mark_request_status "$procf" "done"
+                else
+                    mark_request_status "$procf" "failed"
+                fi
+                ;;
+            "autopause-enable")
+                if /opt/manager/manager.sh autopause-enable --apply; then
+                    mark_request_status "$procf" "done"
+                else
+                    mark_request_status "$procf" "failed"
+                fi
+                ;;
             "stop")
                 opt=$(jq -r '.option // empty' "$procf" 2>/dev/null || true)
                 health=$(get_health 2>/dev/null || true)

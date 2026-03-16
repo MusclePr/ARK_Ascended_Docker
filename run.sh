@@ -24,8 +24,12 @@ case "$1" in
         docker build -t "$IMAGE:$TAG" .
         exit 0
         ;;
-    up)
+    clean)
+        docker compose down -v --rmi all --remove-orphans
         rm -rf ark_data/.signals/*
+        exit 0
+        ;;
+    up)
         docker compose up -d
         exec docker compose logs -f
         ;;

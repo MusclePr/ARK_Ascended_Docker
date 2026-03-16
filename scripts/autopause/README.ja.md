@@ -26,6 +26,20 @@
 7. `manager pause` 実行時に `knockd` が起動し、クライアントのUDPアクセスを検知すると `manager.sh unpause` を直接実行します。
 8. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.ts` 更新）を `manager.sh unpause` 側で保証します。
 
+## ノード単位の一時無効化
+
+- 無効化ファイル: `/opt/arkserver/.signals/server_<port>/autopause/disabled.lock`
+- 無効化コマンド: `manager autopause-disable`（即時実行は `manager autopause-disable --apply`）
+- 有効化コマンド: `manager autopause-enable`（即時実行は `manager autopause-enable --apply`）
+- 状態確認: `manager autopause-status`
+
+### 無効化中の挙動
+
+- AUTO_PAUSE 起因の pause/wake 遷移を停止します。
+- すでに sleep 中の場合は wake 遷移を実行して RUNNING を維持します。
+- knockd による AUTO_PAUSE 起因の wake トリガーも停止します。
+- lock を削除するまで無効状態を維持します。
+
 ## 注意点
 
 - パケット監視によるウェイクアップ機能のため、`NET_RAW` ケーパビリティが必要です。

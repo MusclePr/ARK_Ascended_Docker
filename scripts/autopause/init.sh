@@ -27,7 +27,8 @@ if [ "${AUTO_PAUSE_ENABLED,,}" == "true" ]; then
     mkdir -p "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
     chown -R arkuser:arkuser "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
 
-    # Cleanup stale flags and logs on startup
+    # Cleanup stale runtime flags and logs on startup.
+    # Keep AUTO_PAUSE_DISABLED_LOCK to preserve operator intent across restarts.
     rm -f "$AUTO_PAUSE_SLEEP_FLAG" "$AUTO_PAUSE_WAKE_FLAG" 2>/dev/null || true
     rm -f "$EOS_SESSION_TEMPLATE" "$EOS_CREDS_FILE" 2>/dev/null || true
     # Truncate logs and remove temporary captures to avoid confusion on new session

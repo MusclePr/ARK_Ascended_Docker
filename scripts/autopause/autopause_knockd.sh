@@ -6,6 +6,7 @@ source "/opt/manager/helper.sh"
 
 KNOCKD_CONF="${AUTO_PAUSE_KNOCKD_CONF}"
 KNOCKD_PID_FILE="${AUTO_PAUSE_KNOCKD_PID_FILE}"
+AUTO_PAUSE_DISABLED_LOCK="${AUTO_PAUSE_DISABLED_LOCK:-${AUTO_PAUSE_WORK_DIR}/disabled.lock}"
 ACTION="${1:-start}"
 
 if [[ "$(id -un 2>/dev/null || true)" != "arkuser" ]]; then
@@ -43,6 +44,11 @@ stop_knockd() {
 }
 
 if [[ "$ACTION" == "stop" ]]; then
+    stop_knockd
+    exit 0
+fi
+
+if [[ -f "$AUTO_PAUSE_DISABLED_LOCK" ]]; then
     stop_knockd
     exit 0
 fi
