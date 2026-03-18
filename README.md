@@ -54,6 +54,8 @@ asa_server  |[2023.10.31-17.07.03:329][  2]wp.Runtime.HLOD = "1"
 ### Configuration
 The main server configuration is done through the [.env](./.env) file. This allows you to change the server name, port, passwords etc.
 
+If you run a clustered setup, `manager update` and `AUTO_UPDATE_ENABLED` are intended to run only on the container with `CLUSTER_MASTER=true`.
+
 The server files are stored in a mounted volume in the [ark_data](./ark_data/) folder. The additional configuration files are found in this folder: [Game.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/Game.ini), [GameUserSettings.ini](./ark_data/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini).
 
 Unlike ARK Survival Evolved, only one port must be exposed to the internet, namely the `SERVER_PORT`. It is not necessary to expose the `RCON_PORT`.

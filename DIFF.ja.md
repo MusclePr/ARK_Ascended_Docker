@@ -40,6 +40,7 @@
     AUTO_UPDATE_CRON_EXPRESSION="0 * * * *"
     UPDATE_WARN_MINUTES=30
     ```
+  - クラスター構成では、`manager update` と `AUTO_UPDATE_ENABLED` による自動更新は `CLUSTER_MASTER=true` のコンテナのみが実行します。
 - **ヘルスチェック機能の導入**: コンテナの状態と実際のゲームプロセス（Wine/Proton）の状態を同期させ、異常検知時の自動再起動（自己修復）による安定稼働を図る仕組みが追加されました。
     ```ini
     SERVER_SHUTDOWN_TIMEOUT=30
