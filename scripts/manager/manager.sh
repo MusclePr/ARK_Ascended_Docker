@@ -1022,6 +1022,10 @@ main() {
             get_health
             ;;
         "update") 
+            if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
+                LogError "Update can only be initiated on the cluster master node."
+                exit 2
+            fi
             update "${@:2}"
             ;;
         "backup")
