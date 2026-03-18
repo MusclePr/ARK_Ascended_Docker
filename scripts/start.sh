@@ -185,7 +185,7 @@ manager start &
 process_log_line() {
     local line
     line=$(echo -n "$1" | tr -d '\r\n')
-    local -r log_head_regex='^\[[0-9]{4}\.[0-9]{2}\.[0-9]{2}\-[0-9]{2}\.[0-9]{2}\.[0-9]{2}:[0-9]{3}\]\[[0-9 ]{3}\](.+)'
+    local -r log_head_regex='^\[[0-9]{4}\.[0-9]{2}\.[0-9]{2}\-[0-9]{2}\.[0-9]{2}\.[0-9]{2}:[0-9]{3}\]\[[0-9 ]{1,8}\](.+)'
     local -r startup_regex='Server has completed startup'
     if [[ "$line" =~ $log_head_regex ]]; then
         line="${BASH_REMATCH[1]}"
