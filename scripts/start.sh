@@ -3,7 +3,7 @@
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
-mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR"
+mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR" "$CLUSTER_SIGNALS_DIR"
 
 # Clean up old status file for this server on startup
 rm -f "${SERVER_SIGNALS_DIR}/status" 2>/dev/null || true
