@@ -18,18 +18,17 @@ export LOG_PATH="${LOG_DIR}/${LOG_FILE:-ShooterGame.log}"
 export SIGNALS_DIR="/opt/arkserver/.signals"
 export SERVER_SIGNALS_DIR="${SIGNALS_DIR}/server_${SERVER_PORT}"
 export CLUSTER_SIGNALS_DIR="${SIGNALS_DIR}/cluster"
-export MAINTENANCE_REQUEST_FILE="${SIGNALS_DIR}/maintenance.request"
+export MAINTENANCE_REQUEST_FILE="${CLUSTER_SIGNALS_DIR}/maintenance.request"
 export REQUEST_JSON="${SERVER_SIGNALS_DIR}/request.json"
 export CLUSTER_REQUEST_JSON="${CLUSTER_SIGNALS_DIR}/request.json"
-export LOCK_FILE="${SIGNALS_DIR}/maintenance.lock"
+export LOCK_FILE="${CLUSTER_SIGNALS_DIR}/maintenance.lock"
 export WAITING_FILE="${SERVER_SIGNALS_DIR}/waiting.flag"
-export MASTER_READY_FILE="${SIGNALS_DIR}/master_ready.flag"
-export MASTER_LOCK_DIR="${SIGNALS_DIR}/master.lock"
+export MASTER_READY_FILE="${CLUSTER_SIGNALS_DIR}/master_ready.flag"
+export MASTER_LOCK_DIR="${CLUSTER_SIGNALS_DIR}/master.lock"
 export MASTER_LOCK_OWNER_FILE="${MASTER_LOCK_DIR}/owner"
-export UPDATING_FLAG="${SIGNALS_DIR}/updating.lock"
-export RESUME_FLAG="${SERVER_SIGNALS_DIR}/autoresume.flag"
+export UPDATING_FLAG="${CLUSTER_SIGNALS_DIR}/updating.lock"
 export STATUS_FILE="${SERVER_SIGNALS_DIR}/status"
-export SESSION_NAME_LOCK="${SIGNALS_DIR}/session_name.lock"
+export SESSION_NAME_LOCK="${CLUSTER_SIGNALS_DIR}/session_name.lock"
 
 # shellcheck source=./scripts/autopause/helper.sh
 source "/opt/autopause/helper.sh"
@@ -74,7 +73,7 @@ initialize_cluster_ports() {
         return 1
     fi
 
-    mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR" 2>/dev/null || true
+    mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR" "$CLUSTER_SIGNALS_DIR" 2>/dev/null || true
 
     if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
         CLUSTER_PORTS=("$SERVER_PORT")
@@ -588,7 +587,7 @@ enter_maintenance() {
         shift
     done
 
-    mkdir -p "${SIGNALS_DIR}" 2>/dev/null || true
+    mkdir -p "${SIGNALS_DIR}" "${CLUSTER_SIGNALS_DIR}" 2>/dev/null || true
     LogInfo "Requesting Cluster Maintenance (${action})..."
     # Remove any previous MASTER_READY_FILE to avoid immediate resume from stale state
     rm -f "$MASTER_READY_FILE" 2>/dev/null || true
@@ -596,7 +595,7 @@ enter_maintenance() {
     
     # content: action (atomic write)
     local tmp_req
-    tmp_req=$(mktemp "${SIGNALS_DIR}/maintenance.request.XXXXXX") && echo "$action" > "$tmp_req" && mv -f "$tmp_req" "$MAINTENANCE_REQUEST_FILE"
+    tmp_req=$(mktemp "${CLUSTER_SIGNALS_DIR}/maintenance.request.XXXXXX") && echo "$action" > "$tmp_req" && mv -f "$tmp_req" "$MAINTENANCE_REQUEST_FILE"
 
     LogInfo "Initiating Cluster Maintenance request..."
     if [[ -z "$start_epoch" ]]; then
