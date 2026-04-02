@@ -233,3 +233,28 @@
 | ファイル名 | 作成タイミング (作成元) | 削除タイミング (生存期間) | 目的・用途 |
 | :--- | :--- | :--- | :--- |
 | `server_<PORT>/status` | サーバーの状態変化時 (`update_status`) | サーバー再起動時 | 外部監視用に、現在のサーバーの詳細ステータス（"Ready", "Updating", "Starting" 等）をテキストで保持します。 |
+
+### AUTO_PAUSE 制御用
+`AUTO_PAUSE_ENABLED=true` の場合、`server_<PORT>/autopause/` 配下に AUTO_PAUSE 用の状態ファイル・ログ・キャッシュを保持します。
+
+| ファイル名 | 作成タイミング (作成元) | 削除タイミング (生存期間) | 目的・用途 |
+| :--- | :--- | :--- | :--- |
+| `server_<PORT>/autopause/` | `autopause/helper.sh`, `autopause/init.sh`, `autopause_controller.sh`, `autopause_knockd.sh` | コンテナ/運用者が明示的に削除するまで | AUTO_PAUSE 関連の作業ディレクトリ。 |
+| `server_<PORT>/autopause/sleep.flag` | sleep 遷移成功時 (`autopause_controller.sh`) | wake 遷移時、または起動時初期化 (`autopause/init.sh`) | 現在サーバーが sleep 中であることを示すフラグ。 |
+| `server_<PORT>/autopause/wake.flag` | wake 要求時 (`autopause/helper.sh`) | wake 完了時、または起動時初期化 (`autopause/init.sh`) | sleep 中サーバーへの起床要求フラグ。 |
+| `server_<PORT>/autopause/controller.pid` | コントローラー起動時 (`autopause_controller.sh`) | コントローラー停止時 (`autopause_controller.sh`) | AUTO_PAUSE コントローラープロセスの PID。 |
+| `server_<PORT>/autopause/last_active.ts` | 起床直後/活動記録更新時 (`autopause/helper.sh`, `autopause_controller.sh`) | 明示削除時 | 最終活動時刻 (epoch 秒) を保持。再 pause 判定に使用。 |
+| `server_<PORT>/autopause/autopause.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | AUTO_PAUSE コントローラーのメインログ。 |
+| `server_<PORT>/autopause/eos_hb_agent.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | EOS ハートビート処理の動作ログ。 |
+| `server_<PORT>/autopause/eos_hb_agent_stdout.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | EOS ハートビート処理の標準出力/標準エラー。 |
+| `server_<PORT>/autopause/knockd.conf` | knockd 起動時 (`autopause_knockd.sh`) | 明示削除時 | knockd の動的設定ファイル。 |
+| `server_<PORT>/autopause/knockd.pid` | knockd 起動時 (`autopause_knockd.sh`) | knockd 停止時 (`autopause_knockd.sh`) | knockd プロセスの PID。 |
+| `server_<PORT>/autopause/knockd.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | knockd のログ。 |
+| `server_<PORT>/autopause/session_template.json` | mitmproxy アドオンがセッション登録レスポンスを捕捉時 (`capture.py`) | 起動時初期化 (`autopause/init.sh`) | EOS 代理応答に使うセッションテンプレート。 |
+| `server_<PORT>/autopause/eos_creds.json` | mitmproxy アドオンが OAuth 情報を捕捉時 (`capture.py`) | 起動時初期化 (`autopause/init.sh`) | EOS 代理応答に使う認証情報・トークンキャッシュ。 |
+| `server_<PORT>/autopause/disabled.lock` | `manager autopause-disable` 実行時 (`autopause/helper.sh`) | `manager autopause-enable` 実行時 (`autopause/helper.sh`) | ノード単位で AUTO_PAUSE 遷移を停止するロック。 |
+
+> [!NOTE]
+>
+> 以前の実装で作成されていた `server_<PORT>/autopause/<sanitize(SESSION_NAME)>/` は、現在の実装では参照されません。
+> 現行の `mitmproxy/init.sh` は `AUTO_PAUSE_WORK_DIR` 自体を使用し、セッション名サブディレクトリは作成していません。

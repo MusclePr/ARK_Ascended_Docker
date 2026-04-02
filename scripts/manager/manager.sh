@@ -73,7 +73,45 @@ get_eos_token_from_cache() {
     echo "$token"
 }
 
+check_eos_cached() {
+    local session_template="$EOS_SESSION_TEMPLATE"
+    local creds_file="$EOS_CREDS_FILE"
+
+    # 代理応答に必要なテンプレート実体があること
+    if [[ ! -s "$session_template" ]]; then
+        return 1
+    fi
+
+    # heartbeat継続に必要な最低限のキーを確認
+    if ! jq -e '
+        (.url // "" | strings | length > 0) and
+        ((.body.publicData.id // .body.id // "" | strings | length > 0)) and
+        ((.headers["x-epic-locks"] // .headers["X-Epic-Locks"] // .body.privateData.lock // .body.lock // "" | strings | length > 0))
+    ' "$session_template" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # 既存トークンが取れるならOK
+    if get_eos_token_from_cache >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # 既存トークンがなくても、heartbeat側でトークン再取得可能ならOK
+    if [[ -s "$creds_file" ]] && jq -e '(.basic_auth // "" | strings | length > 0) and (.deployment_id // "" | strings | length > 0)' "$creds_file" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
 check_eos() {
+    local mode="${1:-}"
+
+    if [[ "$mode" == "--cache-only" || "${CHECK_EOS_MODE:-}" == "cache-only" ]]; then
+        check_eos_cached
+        return $?
+    fi
+
     # If credentials are not set up yet, attempt to set them up silently.
     # This is needed for mitmproxy to work out of the box.
     if [[ ! -f "$EOS_FILE" ]]; then
@@ -95,7 +133,7 @@ check_eos() {
     # Retrieve cached token without requesting a new one
     token=$(get_eos_token_from_cache) || return 1
     # Send query to get server(s) registered under public ip
-    res=$(curl -s --max-time 10 -X "POST" "https://api.epicgames.dev/wildcard/matchmaking/v1/${id}/filter"    \
+    res=$(curl -s -X "POST" "https://api.epicgames.dev/wildcard/matchmaking/v1/${id}/filter"    \
         -H "Content-Type:application/json"      \
         -H "Accept:application/json"            \
         -H "Authorization: Bearer $token"       \
@@ -138,7 +176,7 @@ full_status_display() {
 
     # Check there was no error
     if [[ "$res" == *"errorCode"* ]]; then
-        LogError "Failed to query EOS... Please run command again."
+        LogError "Failed to query EOS... ${res}"
         full_status_setup
         return
     fi
@@ -948,7 +986,7 @@ main() {
             status "$option"
             ;;
         "check-eos")
-            if check_eos; then
+            if check_eos "$option"; then
                 echo "VISIBLE"
                 exit 0
             else

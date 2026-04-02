@@ -7,12 +7,8 @@ if [ "${AUTO_PAUSE_ENABLED,,}" == "true" ]; then
     LogAction "AUTO PAUSE Proxy"
 
     LogInfo "Launch proxy."
-    CAPTURE_BASE_DIR="${AUTO_PAUSE_WORK_DIR}"
-    mkdir -p "$CAPTURE_BASE_DIR" 2>/dev/null || true
-    chown arkuser:arkuser "$CAPTURE_BASE_DIR" 2>/dev/null || true
-    CAPTURE_DIR="${CAPTURE_BASE_DIR}/$(sanitize "$SESSION_NAME")"
-    mkdir -p "$CAPTURE_DIR" 2>/dev/null || true
-    chown arkuser:arkuser "$CAPTURE_DIR" 2>/dev/null || true
+    mkdir -p "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
+    chown arkuser:arkuser "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
     MITMPROXY_ADDONS_DIR="/opt/autopause/mitmproxy/addons"
     IGNORE_HOSTS="api.steamcmd.net,.steamstatic.com,.steampowered.com,.steamserver.net,.steamcontent.com,.curseforge.com,discord.com"
     # mitmproxy 用パターン生成

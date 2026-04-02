@@ -135,9 +135,8 @@ is_proxy_ready() {
         reasons+=("テンプレート未準備")
     fi
 
-    # 外部からの視認性を確認 (EOS API経由でサーバーが検索可能か)
-    # タイムアウトを追加して、EOS APIの応答が遅い場合にコントローラーがハングするのを防ぐ
-    if ! timeout 10s manager check-eos >/dev/null 2>&1; then
+    # 代理応答可能性を確認 (外部APIには問い合わせず、キャプチャ済み情報の妥当性で判定)
+    if ! manager check-eos --cache-only >/dev/null 2>&1; then
         reasons+=("検索不可")
     fi
 
