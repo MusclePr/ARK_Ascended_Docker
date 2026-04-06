@@ -190,9 +190,15 @@
 - 2026/2/13 にこれまで引数で与えていて有効だったセッション名 `?SessionName=""` が、`GameUserSettings.ini` の `SessionName=` を優先する様になったため、複数のマップサーバーで同じ名前が適用され、サーバー一覧には、単一のセッション名に対し、更新するたびに異なるマップ名が表示されるという衝突が発生した。
   - これを回避するために、`GameUserSettings.ini` のセッション名をロック付きで書き換える処理を追加しました。
 
-## チートコマンドや RCON パスワードとなる ServerAdminPassword が起動パラメータで与えても変わらない問題
+## ServerAdminPassword が起動パラメータで与えても変わらない問題
 
-- 2026/3/10 に気づいた点として、起動パラメータの `?ServerAdminPassword=` が、`GameUserSettings.ini` の `ServerAdminPassword=` を優先する様になっていたため、同様に書き換える処理を追加しました。
+- 2026/3/10 に気づいた点として、起動パラメータの `?ServerAdminPassword=` が、`GameUserSettings.ini` の `ServerAdminPassword=` を優先する様になった。
+  - これを回避するために、同様に書き換える処理を追加しました。
+
+## RCONPort が起動パラメータで与えても変わらない問題
+
+- 2026/4/5 `RCONPort` `RCONEnabled` についても、引数で与えても変更できないため、初回起動から RCON が使えなくなった。
+  - これを回避するために、`GameUserSettings.ini` が無ければ常に生成し、これらの値も常に更新する様に変更しました。
 
 ## .signals ディレクトリ構成
 
