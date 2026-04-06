@@ -71,7 +71,7 @@ We list some configuration options that may be used to customize the server belo
 | MAX_PLAYERS | Maximum number of players. | 10 |
 | SERVER_PASSWORD | Password required to join the server. Comment the variable to disable it. | MyServerPassword |
 | ARK_ADMIN_PASSWORD | Password required for cheats and RCON. On server start, this value is synchronized into `GameUserSettings.ini` (`[ServerSettings] ServerAdminPassword`) to avoid RCON auth mismatch. | MyArkAdminPassword |
-| RCON_PORT | Port used to connect through RCON. To access RCON remotely, uncomment `#- "${RCON_PORT}:${RCON_PORT}/tcp"` in `docker-compose.yml`. | 32330 |
+| RCON_PORT | Port used to connect through RCON. On server start, this value is synchronized into `GameUserSettings.ini` (`[ServerSettings] RCONPort`) and `RCONEnabled=True` is enforced before launch. To access RCON remotely, uncomment `#- "${RCON_PORT}:${RCON_PORT}/tcp"` in `docker-compose.yml`. | 32330 |
 | DISABLE_BATTLEYE | Comment to enable BattlEye on the server. | BattlEye Disabled |
 | MODS | Comma-separated list of mods to install on the server. | Disabled |
 | ARK_EXTRA_OPTS | Extra ?Argument=Value to add to the startup command. | ?ServerCrosshair=true?OverrideStructurePlatformPrevention=true?OverrideOfficialDifficulty=5.0?ShowFloatingDamageText=true?AllowFlyerCarryPvE=true |

@@ -782,3 +782,148 @@ wait_rcon_ready_and_release_lock() {
     LogSuccess "Server is ready (or timeout). Releasing session name lock."
     release_session_name_lock
 }
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed 's/[\\/&]/\\\\&/g'
+}
+
+normalize_file_to_crlf() {
+    local target_file="$1"
+
+    if [[ ! -f "$target_file" ]]; then
+        return 1
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp) || return 1
+
+    awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' "$target_file" > "$tmp_file"
+    mv -f "$tmp_file" "$target_file"
+    return 0
+}
+
+create_gameusersettings_minimal_template() {
+    local target_file="$1"
+
+    mkdir -p "$(dirname "$target_file")" 2>/dev/null || true
+    cat > "$target_file" <<EOF
+;METADATA=(Diff=true, UseCommands=true)
+[ServerSettings]
+EOF
+    normalize_file_to_crlf "$target_file"
+}
+
+ini_get_key_value() {
+    local target_file="$1"
+    local key="$2"
+
+    if [[ ! -f "$target_file" ]]; then
+        return 1
+    fi
+
+    grep -m 1 "^${key}=" "$target_file" | cut -d'=' -f2- | tr -d '\r'
+}
+
+ini_server_setting_needs_update() {
+    local target_file="$1"
+    local key="$2"
+    local desired_value="$3"
+
+    if [[ ! -f "$target_file" ]]; then
+        return 0
+    fi
+
+    if ! grep -q "^${key}=" "$target_file"; then
+        return 0
+    fi
+
+    local current_value
+    current_value=$(ini_get_key_value "$target_file" "$key")
+    if [[ "$current_value" != "$desired_value" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+ini_upsert_server_setting() {
+    local target_file="$1"
+    local key="$2"
+    local desired_value="$3"
+    local section_name="ServerSettings"
+
+    if [[ ! -f "$target_file" ]]; then
+        return 1
+    fi
+
+    if grep -q "^${key}=" "$target_file"; then
+        local current_value
+        current_value=$(ini_get_key_value "$target_file" "$key")
+        if [[ "$current_value" == "$desired_value" ]]; then
+            return 1
+        fi
+
+        local escaped_value
+        escaped_value=$(escape_sed_replacement "$desired_value")
+        sed -i "s/^${key}=.*/${key}=${escaped_value}/" "$target_file"
+        normalize_file_to_crlf "$target_file"
+        return 0
+    fi
+
+    local escaped_value
+    escaped_value=$(escape_sed_replacement "$desired_value")
+    if grep -q "^\[${section_name}\]" "$target_file"; then
+        sed -i "/^\[${section_name}\]/a ${key}=${escaped_value}" "$target_file"
+    else
+        printf '\n[%s]\n%s=%s\n' "$section_name" "$key" "$desired_value" >> "$target_file"
+    fi
+
+    normalize_file_to_crlf "$target_file"
+    return 0
+}
+
+needs_sync_gameusersettings_ignored_params() {
+    local target_file="$1"
+
+    if [[ ! -f "$target_file" ]]; then
+        return 0
+    fi
+
+    if [[ -n "${ARK_ADMIN_PASSWORD}" ]] && ini_server_setting_needs_update "$target_file" "ServerAdminPassword" "${ARK_ADMIN_PASSWORD}"; then
+        return 0
+    fi
+
+    if ini_server_setting_needs_update "$target_file" "RCONEnabled" "True"; then
+        return 0
+    fi
+
+    if [[ -n "${RCON_PORT}" ]] && ini_server_setting_needs_update "$target_file" "RCONPort" "${RCON_PORT}"; then
+        return 0
+    fi
+
+    return 1
+}
+
+sync_gameusersettings_ignored_params() {
+    local target_file="$1"
+    local changed=1
+
+    if [[ ! -f "$target_file" ]]; then
+        create_gameusersettings_minimal_template "$target_file"
+        changed=0
+    fi
+
+    if [[ -n "${ARK_ADMIN_PASSWORD}" ]] && ini_upsert_server_setting "$target_file" "ServerAdminPassword" "${ARK_ADMIN_PASSWORD}"; then
+        changed=0
+    fi
+
+    if ini_upsert_server_setting "$target_file" "RCONEnabled" "True"; then
+        changed=0
+    fi
+
+    if [[ -n "${RCON_PORT}" ]] && ini_upsert_server_setting "$target_file" "RCONPort" "${RCON_PORT}"; then
+        changed=0
+    fi
+
+    return "$changed"
+}

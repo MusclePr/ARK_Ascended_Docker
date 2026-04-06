@@ -444,63 +444,32 @@ start() {
         return 0
     fi
 
-    # Logic to update SessionName/ServerAdminPassword in GameUserSettings.ini
+    # Synchronize settings that are ignored when passed only via startup parameters.
     GUS_FILE="/opt/arkserver/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini"
-    if [ -f "${GUS_FILE}" ]; then
-        local lock_acquired="false"
-        local escaped_value
+    local ini_sync_needed="false"
 
-        # Keep sed replacement safe for special characters (/,&,\).
-        escape_sed_replacement() {
-            printf '%s' "$1" | sed 's/[\\/&]/\\\\&/g'
-        }
+    if [ -n "${SESSION_NAME}" ] && ini_server_setting_needs_update "${GUS_FILE}" "SessionName" "${SESSION_NAME}"; then
+        ini_sync_needed="true"
+    fi
 
-        if [ -n "${SESSION_NAME}" ]; then
-            # tr -d '\r' to handle Windows-style line endings
-            CURRENT_SESSION_NAME=$(grep "^SessionName=" "${GUS_FILE}" | head -n1 | cut -d'=' -f2- | tr -d '\r')
-            if [ "${CURRENT_SESSION_NAME}" != "${SESSION_NAME}" ]; then
-                LogInfo "SessionName change detected in ${GUS_FILE}. Synchronizing GameUserSettings.ini."
-                if [ "${lock_acquired}" != "true" ]; then
-                    set_server_status "WAITING"
-                    acquire_session_name_lock
-                    lock_acquired="true"
-                fi
-                escaped_value=$(escape_sed_replacement "${SESSION_NAME}")
-                if grep -q "^SessionName=" "${GUS_FILE}"; then
-                    sed -i "s/^SessionName=.*/SessionName=${escaped_value}/" "${GUS_FILE}"
-                else
-                    printf '\nSessionName=%s\n' "${SESSION_NAME}" >> "${GUS_FILE}"
-                fi
-            fi
+    if needs_sync_gameusersettings_ignored_params "${GUS_FILE}"; then
+        ini_sync_needed="true"
+    fi
+
+    if [ "${ini_sync_needed}" == "true" ]; then
+        set_server_status "WAITING"
+        acquire_session_name_lock
+
+        if sync_gameusersettings_ignored_params "${GUS_FILE}"; then
+            LogInfo "Synchronized startup-ignored settings in ${GUS_FILE}."
         fi
 
-        if [ -n "${ARK_ADMIN_PASSWORD}" ]; then
-            local current_admin_password
-            current_admin_password=$(grep "^ServerAdminPassword=" "${GUS_FILE}" | head -n1 | cut -d'=' -f2- | tr -d '\r')
-
-            if [ "${current_admin_password}" != "${ARK_ADMIN_PASSWORD}" ]; then
-                LogInfo "ServerAdminPassword mismatch detected in ${GUS_FILE}. Synchronizing from ARK_ADMIN_PASSWORD."
-                if [ "${lock_acquired}" != "true" ]; then
-                    set_server_status "WAITING"
-                    acquire_session_name_lock
-                    lock_acquired="true"
-                fi
-
-                escaped_value=$(escape_sed_replacement "${ARK_ADMIN_PASSWORD}")
-                if grep -q "^ServerAdminPassword=" "${GUS_FILE}"; then
-                    sed -i "s/^ServerAdminPassword=.*/ServerAdminPassword=${escaped_value}/" "${GUS_FILE}"
-                elif grep -q "^\[ServerSettings\]" "${GUS_FILE}"; then
-                    sed -i "/^\[ServerSettings\]/a ServerAdminPassword=${escaped_value}" "${GUS_FILE}"
-                else
-                    printf '\n[ServerSettings]\nServerAdminPassword=%s\n' "${ARK_ADMIN_PASSWORD}" >> "${GUS_FILE}"
-                fi
-            fi
+        if [ -n "${SESSION_NAME}" ] && ini_upsert_server_setting "${GUS_FILE}" "SessionName" "${SESSION_NAME}"; then
+            LogInfo "SessionName change detected in ${GUS_FILE}. Synchronizing GameUserSettings.ini."
         fi
 
-        if [ "${lock_acquired}" == "true" ]; then
-            # Wait for RCON in background to release lock once server is fully up
-            wait_rcon_ready_and_release_lock &
-        fi
+        # Wait for RCON in background to release lock once server is fully up
+        wait_rcon_ready_and_release_lock &
     fi
 
     LogInfo "Starting server on port ${SERVER_PORT}"
