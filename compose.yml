@@ -4,11 +4,10 @@ services:
     extends:
       file: common.yml
       service: asa
-    container_name: asa0
+    container_name: ${ASA0_CONTAINER_NAME}
     ports:
       - "${ASA0_SERVER_PORT}:${ASA0_SERVER_PORT}/udp"
       - "${ASA0_QUERY_PORT}:${ASA0_QUERY_PORT}/udp"
-      - "8081:8081/tcp" # For proxy web interface (if AUTO_PAUSE_DEBUG enabled)
     environment:
       - "SERVER_MAP=${ASA0_SERVER_MAP}"
       - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA0_SESSION_NAME}"
@@ -17,53 +16,24 @@ services:
       - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
     # --- As asa0 is a cluster master server, the following specific settings are required. ---
       - "CLUSTER_MASTER=true"
-      - "CLUSTER_NODES=${ASA0_CLUSTER_NODES:-2}"
+      - "CLUSTER_NODES=${ASA0_CLUSTER_NODES:-1}"
       - "AUTO_BACKUP_ENABLED=${ASA0_AUTO_BACKUP_ENABLED}"
       - "AUTO_BACKUP_CRON_EXPRESSION=${ASA0_AUTO_BACKUP_CRON_EXPRESSION}"
       - "AUTO_UPDATE_ENABLED=${ASA0_AUTO_UPDATE_ENABLED}"
       - "AUTO_UPDATE_CRON_EXPRESSION=${ASA0_AUTO_UPDATE_CRON_EXPRESSION}"
-      # - "AUTO_PAUSE_DEBUG=true"
     volumes:
-      - ${HOST_CLUSTER_DIR:-.}/ark_backup:/var/backups
-
-  asa1:
-    extends:
-      file: common.yml
-      service: asa
-    container_name: asa1
-    ports:
-      - "${ASA1_SERVER_PORT}:${ASA1_SERVER_PORT}/udp"
-      - "${ASA1_QUERY_PORT}:${ASA1_QUERY_PORT}/udp"
-    environment:
-      - "SERVER_MAP=${ASA1_SERVER_MAP}"
-      - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA1_SESSION_NAME}"
-      - "SERVER_PORT=${ASA1_SERVER_PORT}"
-      - "QUERY_PORT=${ASA1_QUERY_PORT}"
-      - "DISCORD_WEBHOOK_URL=${ASA1_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
-      - "LOG_FILE=ShooterGame_asa1.log" # Avoid log file conflicts
-
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-#  asa<no>:
-#    extends:
-#      file: common.yml
-#      service: asa
-#    container_name: asa<no>
-#    ports:
-#      - "${ASA<no>_SERVER_PORT}:${ASA<no>_SERVER_PORT}/udp"
-#      - "${ASA<no>_QUERY_PORT}:${ASA<no>_QUERY_PORT}/udp"
-#    environment:
-#      - "SERVER_MAP=${ASA<no>_SERVER_MAP}"
-#      - "SESSION_NAME=${ASA_SESSION_PREFIX}${ASA<no>_SESSION_NAME}"
-#      - "SERVER_PORT=${ASA<no>_SERVER_PORT}"
-#      - "QUERY_PORT=${ASA<no>_QUERY_PORT}"
-#      - "DISCORD_WEBHOOK_URL=${ASA<no>_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
-#      - "LOG_FILE=ShooterGame_asa<no>.log" # Avoid log file conflicts
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      - ${HOST_CLUSTER_DIR:-.}/backups:/var/backups
 
   asa_config:
-    container_name: asa_config
+    container_name: ${CLUSTER_NAME}_asa_config
     image: busybox
     init: true
     command: httpd -vfh /web
     volumes:
       - ${HOST_CLUSTER_DIR:-.}/web:/web:ro
+    networks:
+      - default
+
+networks:
+  default:
+    name: ${CLUSTER_NAME}_cluster_default
