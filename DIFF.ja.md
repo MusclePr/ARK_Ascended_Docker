@@ -264,3 +264,7 @@
 >
 > 以前の実装で作成されていた `server_<PORT>/autopause/<sanitize(SESSION_NAME)>/` は、現在の実装では参照されません。
 > 現行の `mitmproxy/init.sh` は `AUTO_PAUSE_WORK_DIR` 自体を使用し、セッション名サブディレクトリは作成していません。
+
+# 参考資料
+
+- [ark.wiki.gg/wiki/Server_configuration (サーバー構成)](https://ark.wiki.gg/wiki/Server_configuration)

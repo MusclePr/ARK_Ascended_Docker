@@ -85,6 +85,7 @@ If you want to run a cluster with two or more containers running at the same tim
 - There is a template compose file for a cluster configuration see [docker-compose-cluster.yml](./docker-compose-cluster.yml). 
 - Create all ark_* folders in your clone directory with ``mkdir`` and make sure the permissions are correct.
 - Edit the shared Configuration in the [.env](./.env) file
+- `CLUSTER_ID` is required and must be a unique, non-empty value for your environment. The container startup now fails fast if it is empty or left as `GlobalUniqueClusterID`.
 - Every setting which is Container specific can be added to the Docker Compose file int the environement tag for example:
   ```yaml
   environment:
