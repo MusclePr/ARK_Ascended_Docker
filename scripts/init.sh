@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Fail fast before any worker/process startup when cluster id is unset/default.
+if [[ -z "${CLUSTER_ID:-}" || "${CLUSTER_ID}" == "GlobalUniqueClusterID" ]]; then
+	echo "ERROR: CLUSTER_ID must be set to a unique value and must not be empty or GlobalUniqueClusterID." >&2
+	exit 1
+fi
+
 # Ensure permissions
 chown arkuser:arkuser /opt/arkserver 2>/dev/null || true
 chown arkuser:arkuser /var/backups 2>/dev/null || true
