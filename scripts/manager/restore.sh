@@ -92,8 +92,8 @@ Restore_apply() {
     LogInfo "Restoring backup: $archive"
     set_server_status "RESTORING"
 
-    # Simple extraction: unpack archive directly into /opt/arkserver
-    if ! tar -xzf "$archive" -C /opt/arkserver --overwrite; then
+    # Simple extraction: unpack archive directly into /opt/arkserver/ShooterGame
+    if ! tar -xzf "$archive" -C /opt/arkserver/ShooterGame --overwrite; then
         LogError "Tar extraction failed"
         trap - EXIT
         exit_maintenance

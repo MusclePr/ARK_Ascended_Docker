@@ -650,6 +650,11 @@ master_release_after_start() {
             LogWarn "Timeout waiting for MASTER_READY_FILE (${wait_timeout}s). Proceeding to release locks to avoid prolonged downtime."
         fi
 
+        # Release maintenance locks before dispatching start requests so that
+        # non-master nodes can process the start request without being deferred
+        # by the LOCK_FILE check in request_worker.sh.
+        exit_maintenance
+
         # Once master is ready, trigger start on all nodes through the existing request path.
         # start is idempotent, so master receiving its own start request is safe.
         LogInfo "Dispatching cluster start requests after master readiness."
@@ -660,9 +665,8 @@ master_release_after_start() {
         fi
     else
         LogInfo "Single-node cluster; skipping MASTER_READY_FILE wait."
+        exit_maintenance
     fi
-
-    exit_maintenance
 }
 
 
