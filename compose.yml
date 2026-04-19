@@ -20,7 +20,7 @@ services:
       - "AUTO_UPDATE_ENABLED=${ASA0_AUTO_UPDATE_ENABLED}"
       - "AUTO_UPDATE_CRON_EXPRESSION=${ASA0_AUTO_UPDATE_CRON_EXPRESSION}"
     volumes:
-      - ${HOST_CLUSTER_DIR:-.}/backups:/var/backups
+      - ${HOST_CLUSTER_DIR:-.}/ark_backup:/var/backups
 
   asa_config:
     container_name: ${COMPOSE_PROJECT_NAME}_asa_config

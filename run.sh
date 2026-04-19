@@ -48,10 +48,10 @@ case "$1" in
         docker exec -itu arkuser "$@"
         ;;
     backup)
-        docker exec -itu arkuser asa0 manager backup
+        docker exec -itu arkuser test_asa0 manager backup
         ;;
     restore)
-        docker exec -itu arkuser asa0 manager restore "$2"
+        docker exec -itu arkuser test_asa0 manager restore "$2"
         ;;
     *)
         echo "Usage: $(basename $0) {up|down|build|push|shellcheck|exec|backup|restore}"
