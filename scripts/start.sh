@@ -115,8 +115,6 @@ wait_for_valid_installation() {
 mkdir -p "${STEAM_COMPAT_DATA_PATH}"
 
 if [[ "${CLUSTER_MASTER,,}" == "true" ]]; then
-    # Revoke permission early so non-master nodes never start using a stale flag from a previous run.
-    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
     # Reset session name lock in case of previous crash
     rmdir "${SESSION_NAME_LOCK}" 2>/dev/null || true
     
