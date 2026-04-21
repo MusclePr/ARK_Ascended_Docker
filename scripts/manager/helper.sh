@@ -589,8 +589,6 @@ enter_maintenance() {
 
     mkdir -p "${SIGNALS_DIR}" "${CLUSTER_SIGNALS_DIR}" 2>/dev/null || true
     LogInfo "Requesting Cluster Maintenance (${action})..."
-    # Remove any previous MASTER_READY_FILE to avoid immediate resume from stale state
-    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
     touch "$LOCK_FILE" 2>/dev/null || true
     
     # content: action (atomic write)
