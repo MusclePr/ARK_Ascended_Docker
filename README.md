@@ -92,6 +92,7 @@ If you want to run a cluster with two or more containers running at the same tim
       SERVER_MAP: TheIsland_WP
       SESSION_NAME: My Awesome Server with The Island
   ```
+  - For `-newsaveformat` setups, successful player joins are tracked per cluster under `ShooterGame/Saved/Cluster/.login/${CLUSTER_ID}/last_map_<EOSID>.txt`.
   - Set the **port** to a different one for each instance, eg 7777, 7778, 7779 etc. in the docker compose file if not already correct.
   - Add `-clusterID=[yourclusterid]` to the `ARK_EXTRA_DASH_OPTS` with the same `clusterID` for every instance you want to cluster. The `clusterID` should be a random combination of letters and numbers, don't use special characters. The line should somewhat look like this:
     ```
@@ -198,6 +199,8 @@ Server should be up in a few minutes
 **Server create Backup**
 
 The manager supports creating backups of your savegame and all config files. Backups are stores in the ./ark_backup volume. 
+
+Cluster backups also include `ShooterGame/Saved/Cluster/.login/${CLUSTER_ID}` when present.
 
 _No Server shutdown needed._
 ```bash

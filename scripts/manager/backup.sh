@@ -116,6 +116,11 @@ Backup_create() {
         (tar -C "$saved_base/Cluster/clusters" -cf - "${CLUSTER_ID}" || [[ $? -eq 1 ]]) | tar -C "$tmp_path/Saved/Cluster/clusters" -xf -
     fi
 
+    if [[ -n "${CLUSTER_ID}" && -d "$saved_base/Cluster/.login/${CLUSTER_ID}" ]]; then
+        mkdir -p "$tmp_path/Saved/Cluster/.login"
+        (tar -C "$saved_base/Cluster/.login" -cf - "${CLUSTER_ID}" || [[ $? -eq 1 ]]) | tar -C "$tmp_path/Saved/Cluster/.login" -xf -
+    fi
+
     if [[ -z "$(ls -A "$tmp_path" 2>/dev/null)" ]]; then
         LogWarn "No matching Saved subpaths found to archive; creating empty backup metadata."
     fi
