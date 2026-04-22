@@ -183,6 +183,53 @@ mkdir -p "${LOG_PATH%/*}" && echo "" > "${LOG_PATH}"
 manager start &
 
 
+write_last_player_map() {
+    local eosid="$1"
+    local server_map="$2"
+
+    if [[ -z "$eosid" ]]; then
+        LogWarn "Skipping last map update: EOSID is empty"
+        return 0
+    fi
+
+    if [[ -z "${CLUSTER_ID:-}" ]]; then
+        LogWarn "Skipping last map update for EOSID=${eosid}: CLUSTER_ID is empty"
+        return 0
+    fi
+
+    local map_name="$server_map"
+    if [[ "$map_name" == *":"* ]]; then
+        map_name="${map_name%%:*}"
+    fi
+
+    if [[ -z "$map_name" ]]; then
+        LogWarn "Skipping last map update for EOSID=${eosid}: map name is empty"
+        return 0
+    fi
+
+    local login_dir="/opt/arkserver/ShooterGame/Saved/Cluster/.login/${CLUSTER_ID}"
+    local target_file="${login_dir}/last_map_${eosid}.txt"
+    local tmp_file="${target_file}.tmp.$$"
+
+    if ! mkdir -p "$login_dir" 2>/dev/null; then
+        LogWarn "Failed to create login directory: ${login_dir}"
+        return 0
+    fi
+
+    if ! printf '%s\n' "$map_name" > "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file" 2>/dev/null || true
+        LogWarn "Failed to write temp last map file for EOSID=${eosid}"
+        return 0
+    fi
+
+    if ! mv -f "$tmp_file" "$target_file" 2>/dev/null; then
+        rm -f "$tmp_file" 2>/dev/null || true
+        LogWarn "Failed to update last map file for EOSID=${eosid}"
+        return 0
+    fi
+}
+
+
 # Function to process log lines for Discord notifications
 process_log_line() {
     local line
@@ -213,6 +260,9 @@ process_log_line() {
                 if [ "$platform" != "None" ]; then
                     platform_msg=" / Platform: \`${platform}\`"
                 fi
+
+                write_last_player_map "$id" "${SERVER_MAP:-}"
+
                 local player_msg
                 DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s has joined"}"
                 player_msg="${DISCORD_MSG_JOINED//%s/$player}"
