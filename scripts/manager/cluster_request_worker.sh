@@ -11,13 +11,19 @@ LOCKDIR="${CLUSTER_SIGNALS_DIR}/request.lock"
 
 mkdir -p "${CLUSTER_SIGNALS_DIR}" 2>/dev/null || true
 
+cleanup_cluster_lock() {
+    rmdir "$LOCKDIR" 2>/dev/null || true
+}
+
+trap cleanup_cluster_lock EXIT
+
 if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
     LogInfo "cluster_request_worker is disabled on non-master node."
     exit 0
 fi
 
 # Cleanup stale lock on start
-rmdir "$LOCKDIR" 2>/dev/null || true
+cleanup_cluster_lock
 
 while true; do
     if [[ -f "$SIGNAL_FILE" ]]; then
@@ -38,7 +44,7 @@ while true; do
         procf="${CLUSTER_SIGNALS_DIR}/request-${request_id}.json"
         if ! mv -f "$SIGNAL_FILE" "$procf" 2>/dev/null; then
             LogError "Failed to rename cluster request processing file with request ID"
-            rmdir "$LOCKDIR" 2>/dev/null || true
+            cleanup_cluster_lock
             sleep "$POLL_INTERVAL"
             continue
         fi
@@ -46,7 +52,7 @@ while true; do
         if [[ -z "$action" ]]; then
             LogError "Cluster request missing action field"
             mark_request_status "$procf" "failed"
-            rmdir "$LOCKDIR" 2>/dev/null || true
+            cleanup_cluster_lock
             sleep "$POLL_INTERVAL"
             continue
         fi
@@ -89,7 +95,7 @@ while true; do
                 ;;
         esac
 
-        rmdir "$LOCKDIR" 2>/dev/null || true
+        cleanup_cluster_lock
     fi
 
     sleep "$POLL_INTERVAL"

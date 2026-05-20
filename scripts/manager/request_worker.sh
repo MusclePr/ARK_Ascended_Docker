@@ -11,6 +11,12 @@ LOCKDIR="${SERVER_SIGNALS_DIR}/request.lock"
 
 mkdir -p "${SERVER_SIGNALS_DIR}" 2>/dev/null || true
 
+cleanup_request_lock() {
+    rmdir "$LOCKDIR" 2>/dev/null || true
+}
+
+trap cleanup_request_lock EXIT
+
 can_handle_request() {
     local action="$1"
     local target_port="$2"
@@ -23,7 +29,7 @@ can_handle_request() {
 }
 
 # Cleanup stale lock on start
-rmdir "$LOCKDIR" 2>/dev/null || true
+cleanup_request_lock
 
 while true; do
 
@@ -41,7 +47,7 @@ while true; do
         target_port=$(jq -r '.target_port // empty' "$SIGNAL_FILE" 2>/dev/null || true)
 
         if ! can_handle_request "$action" "$target_port"; then
-            rmdir "$LOCKDIR" 2>/dev/null || true
+            cleanup_request_lock
             sleep "$POLL_INTERVAL"
             continue
         fi
@@ -49,7 +55,7 @@ while true; do
         procf="${SERVER_SIGNALS_DIR}/request-${request_id}.json"
         if ! mv -f "$SIGNAL_FILE" "$procf" 2>/dev/null; then
             LogError "Failed to rename processing file with request ID"
-            rmdir "$LOCKDIR" 2>/dev/null || true
+            cleanup_request_lock
             sleep "$POLL_INTERVAL"
             continue
         fi
@@ -57,7 +63,7 @@ while true; do
         if [[ -z "$action" ]]; then
             LogError "Request missing action field"
             mark_request_status "$procf" "failed"
-            rmdir "$LOCKDIR" 2>/dev/null || true
+            cleanup_request_lock
             sleep "$POLL_INTERVAL"
             continue
         fi
@@ -168,7 +174,7 @@ while true; do
         esac
 
         # release lock
-        rmdir "$LOCKDIR" 2>/dev/null || true
+        cleanup_request_lock
     fi
     sleep "$POLL_INTERVAL"
 done
