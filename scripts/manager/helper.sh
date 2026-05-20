@@ -47,6 +47,11 @@ waiting_file_for_port() {
     echo "${dir}/waiting.flag"
 }
 
+# Auto-detect master role from hostname set by compose (hostname: master on asa0).
+# This works for both the main container process and docker exec sessions.
+if [[ "${HOSTNAME:-}" == "master" ]]; then
+    CLUSTER_MASTER=true
+fi
 CLUSTER_MASTER="${CLUSTER_MASTER:-false}"
 CLUSTER_NODES="${CLUSTER_NODES:-1}"
 CLUSTER_PORTS_INITIALIZED=false

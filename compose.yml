@@ -4,7 +4,8 @@ services:
     extends:
       file: common.yml
       service: asa
-    container_name: ${COMPOSE_PROJECT_NAME}_asa0
+    container_name: ${COMPOSE_PROJECT_NAME}_asa0 # 同じホスト上で複数の compose プロジェクトを実行する事があるため、プロジェクト名を指定してコンテナ名の衝突を避けます。
+    hostname: master # コンテナ内からのみマスターを識別するための唯一のホスト名。他のコンテナには与えないでください。
     ports:
       - "${ASA0_SERVER_PORT}:${ASA0_SERVER_PORT}/udp"
     environment:
@@ -13,7 +14,6 @@ services:
       - "SERVER_PORT=${ASA0_SERVER_PORT}"
       - "DISCORD_WEBHOOK_URL=${ASA0_DISCORD_WEBHOOK_URL:-${ASA_DISCORD_WEBHOOK_URL}}"
     # --- As asa0 is a cluster master server, the following specific settings are required. ---
-      - "CLUSTER_MASTER=true"
       - "CLUSTER_NODES=${ASA0_CLUSTER_NODES:-1}"
       - "AUTO_BACKUP_ENABLED=${ASA0_AUTO_BACKUP_ENABLED}"
       - "AUTO_BACKUP_CRON_EXPRESSION=${ASA0_AUTO_BACKUP_CRON_EXPRESSION}"

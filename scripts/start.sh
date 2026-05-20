@@ -3,7 +3,36 @@
 # shellcheck source=./scripts/manager/helper.sh
 source "/opt/manager/helper.sh"
 
+stop_if_foreign_compose_is_active() {
+    local lock_owner_project=""
+
+    if [[ ! -d "$MASTER_LOCK_DIR" ]]; then
+        return 0
+    fi
+
+    if [[ -z "${COMPOSE_PROJECT_NAME:-}" ]]; then
+        return 0
+    fi
+
+    if [[ -f "$MASTER_LOCK_OWNER_FILE" ]]; then
+        lock_owner_project=$(sed -n 's/.*owner_id=\([^ ]*\).*/\1/p' "$MASTER_LOCK_OWNER_FILE" 2>/dev/null | head -n 1)
+    fi
+
+    if [[ -z "$lock_owner_project" ]]; then
+        return 0
+    fi
+
+    if [[ "$lock_owner_project" != "$COMPOSE_PROJECT_NAME" ]]; then
+        LogError "Detected active master lock from another compose project (${lock_owner_project}). This compose (${COMPOSE_PROJECT_NAME}) will stop safely."
+        set_server_status "STOPPED"
+        exit 0
+    fi
+}
+
 mkdir -p "$SIGNALS_DIR" "$SERVER_SIGNALS_DIR" "$CLUSTER_SIGNALS_DIR"
+
+# If another compose project already owns the shared cluster lock, stop this instance immediately.
+stop_if_foreign_compose_is_active
 
 # Clean up old status file for this server on startup
 rm -f "${SERVER_SIGNALS_DIR}/status" 2>/dev/null || true
@@ -27,9 +56,19 @@ if [[ "${CLUSTER_MASTER,,}" == "true" ]] && [[ -x "/opt/manager/cluster_request_
 fi
 
 master_lock_acquired=false
+shutdown_status_finalized=false
+
+finalize_shutdown_status() {
+    if [[ "$shutdown_status_finalized" == true ]]; then
+        return 0
+    fi
+    set_server_status "STOPPED"
+    shutdown_status_finalized=true
+}
 
 on_shutdown_signal() {
     LogWarn "Received shutdown signal. Exiting..."
+    set_server_status "STOPPING"
     
     # If server is paused (SIGSTOP'd), it won't receive SIGTERM.
     # We must SIGCONT it first to let it process the shutdown command.
@@ -52,13 +91,27 @@ on_shutdown_signal() {
     if [[ -n "${CRON_PID:-}" ]]; then
         kill "$CRON_PID" 2>/dev/null || true
     fi
-    manager stop --saveworld || true
+    local stop_rc=0
+    manager stop --saveworld || stop_rc=$?
+    if [[ "$stop_rc" -eq 0 ]] || ! get_pid >/dev/null 2>&1; then
+        finalize_shutdown_status
+    fi
     exit 0
 }
 
 cleanup_master_lock() {
+    local cleanup_ok=true
     if [[ "$master_lock_acquired" == true ]]; then
-        rm -rf "$MASTER_LOCK_DIR" 2>/dev/null || true
+        if ! rm -rf "$MASTER_LOCK_DIR" 2>/dev/null; then
+            cleanup_ok=false
+        fi
+        if [[ -d "$MASTER_LOCK_DIR" ]]; then
+            cleanup_ok=false
+        fi
+    fi
+
+    if [[ "$cleanup_ok" == true ]]; then
+        finalize_shutdown_status
     fi
 }
 
@@ -90,7 +143,7 @@ acquire_master_lock_or_exit() {
         exit 1
     fi
     master_lock_acquired=true
-    echo "service=${HOSTNAME} pid=$$ started_at=$(date -Is 2>/dev/null || date)" > "$MASTER_LOCK_OWNER_FILE" 2>/dev/null || true
+    echo "owner_id=${COMPOSE_PROJECT_NAME:-$HOSTNAME} pid=$$ started_at=$(date -Is 2>/dev/null || date)" > "$MASTER_LOCK_OWNER_FILE" 2>/dev/null || true
 }
 
 wait_for_valid_installation() {
@@ -117,6 +170,14 @@ mkdir -p "${STEAM_COMPAT_DATA_PATH}"
 if [[ "${CLUSTER_MASTER,,}" == "true" ]]; then
     # Reset session name lock in case of previous crash
     rmdir "${SESSION_NAME_LOCK}" 2>/dev/null || true
+
+    # At this point, stop_if_foreign_compose_is_active has already exited if the lock
+    # belongs to another compose project. Any remaining lock is stale from a previous
+    # crash of this same compose project.
+    if [[ -d "$MASTER_LOCK_DIR" ]]; then
+        LogWarn "Detected stale master lock. Removing: $MASTER_LOCK_DIR"
+        rm -rf "$MASTER_LOCK_DIR" 2>/dev/null || true
+    fi
     
     acquire_master_lock_or_exit
     initialize_cluster_ports

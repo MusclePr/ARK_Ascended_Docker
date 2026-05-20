@@ -6,6 +6,8 @@ services:
     env_file:
       - ./default/common.env
       - ./.common.env
+    environment:
+      - "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}"
     volumes:
       - ${HOST_CLUSTER_DIR:-.}/ark_data:/opt/arkserver
     cap_add:
