@@ -29,6 +29,7 @@ export MASTER_LOCK_OWNER_FILE="${MASTER_LOCK_DIR}/owner"
 export UPDATING_FLAG="${CLUSTER_SIGNALS_DIR}/updating.lock"
 export STATUS_FILE="${SERVER_SIGNALS_DIR}/status"
 export SESSION_NAME_LOCK="${CLUSTER_SIGNALS_DIR}/session_name.lock"
+export START_LOCK_FILE="${SERVER_SIGNALS_DIR}/start.lock"
 
 # shellcheck source=./scripts/autopause/helper.sh
 source "/opt/autopause/helper.sh"

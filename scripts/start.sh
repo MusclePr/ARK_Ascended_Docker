@@ -92,7 +92,11 @@ on_shutdown_signal() {
         kill "$CRON_PID" 2>/dev/null || true
     fi
     local stop_rc=0
-    manager stop --saveworld || stop_rc=$?
+    if [[ -f "${START_LOCK_FILE}" ]]; then
+        LogInfo "Server was not started due to start lock. Finalizing shutdown immediately."
+    else
+        manager stop --saveworld || stop_rc=$?
+    fi
     if [[ "$stop_rc" -eq 0 ]] || ! get_pid >/dev/null 2>&1; then
         finalize_shutdown_status
     fi
@@ -239,6 +243,17 @@ ln -svf ./ShooterGame/Saved/Config/WindowsServer/Game.ini ./Game.ini
 
 #Create file for showing server logs
 mkdir -p "${LOG_PATH%/*}" && echo "" > "${LOG_PATH}"
+
+# .signals/server_<port>/start.lock ファイルが存在する場合、サーバーは起動せずに待機状態となります。
+# これはメモリを節約するために、起動するコンテナを制限する目的で使用されます。
+if [[ -f "${START_LOCK_FILE}" ]]; then
+    LogWarn "Detected start lock file. Server will not start. Waiting for lock file to be removed: ${START_LOCK_FILE}"
+    set_server_status "BLOCKED"
+    while [[ -f "${START_LOCK_FILE}" ]]; do
+        sleep 5
+    done
+    LogInfo "start lock file removed. Proceeding to start server."
+fi
 
 # Start server through manager
 manager start &
