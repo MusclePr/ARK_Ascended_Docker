@@ -436,6 +436,11 @@ monitor_gusini() {
 }
 
 start() {
+    if [[ -f "${START_LOCK_FILE}" ]]; then
+        LogInfo "Unblock the server from starting."
+        rm -f "${START_LOCK_FILE}" 2>/dev/null || true
+        return 0
+    fi
     autopause_manage_controller "start" || true
 
     if get_health >/dev/null; then
@@ -490,7 +495,11 @@ stop() {
     autopause_manage_controller "stop" || true
 
     if ! get_health >/dev/null ; then
-        LogError "Server is already stopped."
+        if [[ -f "${START_LOCK_FILE}" ]]; then
+            LogInfo "Server is not yet started."
+        else
+            LogError "Server is already stopped."
+        fi
         return 0
     fi
 
@@ -607,6 +616,11 @@ stop() {
 }
 
 pause() {
+    if [[ -f "${START_LOCK_FILE}" ]]; then
+        LogWarn "Pause requested but start lock file exists. The server will ignore this request."
+        return 0
+    fi
+
     local pid
     pid=$(get_pid)
 
@@ -647,6 +661,11 @@ pause() {
 }
 
 unpause() {
+    if [[ -f "${START_LOCK_FILE}" ]]; then
+        LogWarn "Unpause requested but start lock file exists. The server will ignore this request."
+        return 0
+    fi
+
     local pid
     pid=$(get_pid)
     if [[ -z "$pid" ]]; then

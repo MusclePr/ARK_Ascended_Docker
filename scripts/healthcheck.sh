@@ -8,8 +8,8 @@ if ! /usr/local/bin/manager health >/dev/null; then
     # orchestrators don't mark the container unhealthy.
     if [[ -f "${STATUS_FILE}" ]]; then
         status=$(cat "${STATUS_FILE}" 2>/dev/null || true)
-        # Treat explicit STOPPED, STOPPING, PAUSED or PAUSING as healthy (no notification)
-        if [[ "${status}" == "STOPPED" || "${status}" == "STOPPING" || "${status}" == "PAUSED" || "${status}" == "PAUSING" ]]; then
+        # Treat explicit STOPPED, STOPPING, PAUSED, PAUSING or BLOCKED as healthy (no notification)
+        if [[ "${status}" == "STOPPED" || "${status}" == "STOPPING" || "${status}" == "PAUSED" || "${status}" == "PAUSING" || "${status}" == "BLOCKED" ]]; then
             exit 0
         fi
     fi
