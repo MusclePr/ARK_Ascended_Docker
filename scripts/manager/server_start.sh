@@ -77,8 +77,6 @@ if [ -n "${QUERY_PORT}" ]; then
 fi
 
 if [ -n "${CLUSTER_ID}" ]; then
-    CLUSTER_DIR="${CLUSTER_DIR:-/opt/arkserver/ShooterGame/Saved/Cluster}"
-    mkdir -p "${CLUSTER_DIR}"
     ark_flags+=("-clusterID=${CLUSTER_ID}" "-ClusterDirOverride=${CLUSTER_DIR}" "-NoTransferFromFiltering")
 fi
 

@@ -14,6 +14,10 @@ chown arkuser:arkuser /var/backups 2>/dev/null || true
 mkdir -p "/opt/arkserver/.signals/server_${SERVER_PORT}" 2>/dev/null || true
 chown -R arkuser:arkuser /opt/arkserver/.signals 2>/dev/null || true
 
+export CLUSTER_DIR="${CLUSTER_DIR:-/opt/arkserver/ShooterGame/Saved/Cluster}"
+mkdir -p "${CLUSTER_DIR}" 2>/dev/null || true
+chown arkuser:arkuser "${CLUSTER_DIR}" 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/autopause/init.sh
 source "$SCRIPT_DIR/autopause/init.sh"
