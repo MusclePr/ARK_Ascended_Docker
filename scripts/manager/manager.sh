@@ -661,6 +661,8 @@ pause() {
 }
 
 unpause() {
+    local resume_reason="${1:-}"
+
     if [[ -f "${START_LOCK_FILE}" ]]; then
         LogWarn "Unpause requested but start lock file exists. The server will ignore this request."
         return 0
@@ -691,8 +693,12 @@ unpause() {
     pkill -CONT -P "$pid" 2>/dev/null || true
     pkill -CONT -u arkuser -f "(wineserver|services.exe|winedevice.exe|svchost.exe|plugplay.exe|rpcss.exe|xalia.exe|crashpad_handler.exe)" 2>/dev/null || true
     
-    DISCORD_MSG_RESUMED="${DISCORD_MSG_RESUMED:-The Server has been resumed}"
-    DiscordMessage "Resume $SESSION_NAME" "$DISCORD_MSG_RESUMED" "success"
+    local discord_msg_resumed
+    discord_msg_resumed="${DISCORD_MSG_RESUMED:-The Server has been resumed}"
+    if [[ -n "$resume_reason" ]]; then
+        discord_msg_resumed+=" (reason: ${resume_reason})"
+    fi
+    DiscordMessage "Resume $SESSION_NAME" "$discord_msg_resumed" "success"
     set_server_status "RUNNING"
     autopause_mark_awake || true
     autopause_manage_knockd "stop" || true
@@ -967,7 +973,7 @@ update() {
 # Main function
 main() {
     local action="$1"
-    local option="$2"
+    local option="${2:-}"
 
     case "$action" in
         "status")
@@ -1000,14 +1006,17 @@ main() {
             fi
             ;;
         "unpause")
-            if [[ -z "$option" ]]; then
+            local unpause_reason=""
+            if [[ "$option" == "--apply" ]]; then
+                unpause_reason="${*:3}"
+                unpause "$unpause_reason"
+            elif [[ -z "$option" ]]; then
                 /opt/manager/manager.sh --request unpause
                 exit $?
-            elif [[ "$option" == "--apply" ]]; then
-                unpause
             else
-                LogError "Invalid option for unpause: ${option}. Use --apply or no option."
-                exit 1
+                unpause_reason="${*:2}"
+                /opt/manager/manager.sh --request unpause "$unpause_reason"
+                exit $?
             fi
             ;;
         "autopause-disable")
@@ -1094,7 +1103,13 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     if [[ "$1" == "--request" ]]; then
         action="$2"
         option="${3:-}"
+        reason=""
         target_port=""
+
+        if [[ "$action" == "unpause" ]]; then
+            option=""
+            reason="${*:3}"
+        fi
 
         # backup/restore are cluster-scoped and must flow through CLUSTER_REQUEST_JSON.
         # Prevent accidental enqueue into per-server request worker queue.
@@ -1126,9 +1141,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         jq -n \
             --arg action "$action" \
             --arg option "$option" \
+            --arg reason "$reason" \
             --arg request_id "$req_id" \
             --arg target_port "$target_port" \
-            '{action:$action,option:$option,request_id:$request_id,target_port:($target_port | if . == "" then null else . end)}' > "$payload"
+            '{action:$action,option:$option,reason:($reason | if . == "" then null else . end),request_id:$request_id,target_port:($target_port | if . == "" then null else . end)}' > "$payload"
         
         if ! create_request_json "$action" "$payload"; then
             LogError "Failed to create request (busy)."

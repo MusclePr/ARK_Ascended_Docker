@@ -161,7 +161,7 @@ enter_sleep() {
 
     if ! heartbeat_start_if_needed; then
         rm -f "$AUTO_PAUSE_SLEEP_FLAG" 2>/dev/null || true
-        manager unpause --apply || true
+        manager unpause --apply "autopause rollback" || true
         log_line "autopause: ERROR: heartbeat start failed, reverted to awake"
         return 1
     fi
@@ -187,7 +187,7 @@ exit_sleep() {
     # ネットワークリダイレクトの解除は廃止
 
     log_line "autopause: executing local manager unpause..."
-    manager unpause --apply || { log_line "autopause: ERROR: manager unpause failed"; }
+    manager unpause --apply "wake from auto pause" || { log_line "autopause: ERROR: manager unpause failed"; }
 
     log_line "autopause: sleep flag removed."
     
@@ -227,7 +227,7 @@ while true; do
             current_health=$(get_health 2>/dev/null || true)
             if [[ "$current_health" == "PAUSED" ]]; then
                 log_line "autopause: disabled lock detected while paused. Unpausing server."
-                manager unpause --apply || log_line "autopause: ERROR: manager unpause failed while applying disabled lock"
+                manager unpause --apply "auto pause disabled" || log_line "autopause: ERROR: manager unpause failed while applying disabled lock"
             fi
 
             disabled_applied=true

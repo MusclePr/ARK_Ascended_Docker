@@ -45,6 +45,7 @@ while true; do
         action=$(jq -r '.action // empty' "$SIGNAL_FILE" 2>/dev/null || true)
         request_id=$(jq -r '.request_id // empty' "$SIGNAL_FILE" 2>/dev/null || true)
         target_port=$(jq -r '.target_port // empty' "$SIGNAL_FILE" 2>/dev/null || true)
+        reason=$(jq -r '.reason // empty' "$SIGNAL_FILE" 2>/dev/null || true)
 
         if ! can_handle_request "$action" "$target_port"; then
             cleanup_request_lock
@@ -79,7 +80,7 @@ while true; do
                 fi
                 ;;
             "unpause")
-                if /opt/manager/manager.sh unpause --apply; then
+                if /opt/manager/manager.sh unpause --apply "$reason"; then
                     mark_request_status "$procf" "done"
                 else
                     mark_request_status "$procf" "failed"
@@ -104,7 +105,7 @@ while true; do
                 health=$(get_health 2>/dev/null || true)
                 if [[ "$health" == "PAUSED" ]]; then
                     LogInfo "Server is paused. Resuming before processing stop request."
-                    if ! /opt/manager/manager.sh unpause --apply; then
+                    if ! /opt/manager/manager.sh unpause --apply "graceful shutdown preparation"; then
                         LogWarn "Failed to resume paused server. Continuing stop request processing."
                     else
                         sleep 2

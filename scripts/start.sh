@@ -77,7 +77,7 @@ on_shutdown_signal() {
         current_status=$(cat "${STATUS_FILE}" 2>/dev/null || true)
         if [[ "${current_status}" == "PAUSED" ]]; then
             LogInfo "Server is paused. Resuming to allow graceful shutdown..."
-            manager unpause --apply || true
+            manager unpause --apply "graceful shutdown preparation" || true
         fi
     fi
 

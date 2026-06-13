@@ -154,7 +154,7 @@ autopause_disable_apply() {
 	health=$(get_health 2>/dev/null || true)
 	if [[ "$health" == "PAUSED" ]]; then
 		LogInfo "Server is paused. Unpausing due to AUTO_PAUSE disable."
-		if ! /opt/manager/manager.sh unpause --apply; then
+		if ! /opt/manager/manager.sh unpause --apply "auto pause disabled"; then
 			LogError "Failed to unpause server while applying AUTO_PAUSE disable."
 			return 1
 		fi
@@ -291,7 +291,7 @@ ensure_server_awake_for_operation() {
 
 	if [[ "$(get_health 2>/dev/null || true)" == "PAUSED" ]]; then
 		LogInfo "Server is paused. Unpausing before ${reason}."
-		if ! /opt/manager/manager.sh unpause --apply; then
+		if ! /opt/manager/manager.sh unpause --apply "operation preflight: ${reason}"; then
 			LogError "Failed to unpause server for ${reason}."
 			return 1
 		fi
