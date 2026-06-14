@@ -660,6 +660,11 @@ pause() {
     LogSuccess "Server paused."
 }
 
+remove_from_IP4() {
+    # Remove IP addresses (IPv4) from the input string
+    echo "$1" | sed -E 's/from [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}//g'
+}
+
 unpause() {
     local resume_reason="${1:-}"
 
@@ -696,6 +701,8 @@ unpause() {
     local discord_msg_resumed
     discord_msg_resumed="${DISCORD_MSG_RESUMED:-The Server has been resumed}"
     if [[ -n "$resume_reason" ]]; then
+        LogInfo "Resume reason: $resume_reason"
+        resume_reason=$(remove_from_IP4 "$resume_reason")
         discord_msg_resumed+=" (reason: ${resume_reason})"
     fi
     DiscordMessage "Resume $SESSION_NAME" "$discord_msg_resumed" "success"
