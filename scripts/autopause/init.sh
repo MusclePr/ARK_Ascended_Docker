@@ -36,6 +36,33 @@ if [ "${AUTO_PAUSE_ENABLED,,}" == "true" ]; then
     ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_LOG_PATH" 644
     ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_STDOUT" 644
     ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_LOG_PATH" 644
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" 664
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" 664
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" 664
+
+    if [[ ! -s "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" ]]; then
+        {
+            echo "# knockd whitelist"
+            echo "# one IPv4 per line, comments are allowed"
+        } > "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH"
+        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" 2>/dev/null || true
+    fi
+
+    if [[ ! -s "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" ]]; then
+        {
+            echo "# knockd blacklist"
+            echo "# one IPv4 per line, comments are allowed"
+        } > "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH"
+        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" 2>/dev/null || true
+    fi
+
+    if [[ ! -s "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" ]]; then
+        {
+            echo "# knockd greylist"
+            echo "# format: ip|hostname|first_seen|last_seen|hit_count|last_reason"
+        } > "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH"
+        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" 2>/dev/null || true
+    fi
 
     export EOS_SESSION_TEMPLATE="${EOS_SESSION_TEMPLATE:-${AUTO_PAUSE_WORK_DIR}/session_template.json}"
     export EOS_CREDS_FILE="${EOS_CREDS_FILE:-${AUTO_PAUSE_WORK_DIR}/eos_creds.json}"

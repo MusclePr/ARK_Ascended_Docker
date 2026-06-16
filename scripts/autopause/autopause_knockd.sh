@@ -65,7 +65,7 @@ cat > "$KNOCKD_CONF" <<EOF
 [autopause_server_${SERVER_PORT}]
     sequence = ${SERVER_PORT}:udp
     seq_cooldown = 5
-    command = manager unpause --apply "knockd connection from %IP%"
+    command = ${AUTO_PAUSE_KNOCKD_FILTER_SCRIPT} %IP%
 
 EOF
 
