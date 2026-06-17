@@ -9,8 +9,7 @@
 - `init.sh`: サーバー起動時に呼び出され、各コンポーネントを初期化・起動します。
 - `autopause_controller.sh`: メインの制御ループ。RCON経由でプレイヤー数を監視し、スリープ（一時停止/停止）と起床を管理します。
 - `autopause_knockd.sh`: パケット着信をトリガーに起床させるための knockd を設定し、`manager pause` / `manager unpause` から起動・停止を制御します。
-- `knockd_ip_filter.sh`: knockd から渡された送信元IPをホワイト/ブラック/グレーリストで判定し、`unpause` の可否を決定します。
-- `knockd_whitelist_autoupdate.sh`: ログファイル（`LOG_DIR` + `LOG_FILE` で決定される `LOG_PATH`）の `IP for incoming account ... - IP x.x.x.x` 行を解析し、正規接続IPをホワイトリストへ自動反映します。
+- `knockd_ip_filter.sh`: knockd から渡された送信元IPをホワイト/ブラック/グレーリストで判定し、`unpause` の可否を決定します。また、`white` / `black` / `check` コマンドによる手動管理も行えます。
 - `knockd_greylist_append.sh`: 未許可IPやブラックリストIPのアクセス情報をグレーリストへ集約記録します（逆引き名・初回/最終時刻・回数を保持）。
 - `eos_heartbeat.py`: サーバーが一時停止している間に、EOS（Epic Online Services）へサーバーが生存していることを通知する（ハートビート）自律エージェントです。
 
@@ -32,10 +31,10 @@
    - ホワイトリスト一致: `manager.sh unpause` を実行
     - どちらにも未登録: グレーリストへ記録したうえで `manager.sh unpause` を実行
 9. グレーリストには `ip|hostname|first_seen|last_seen|hit_count|last_reason` 形式で蓄積され、手動でブラックリスト昇格判断に利用できます。
-10. ホワイトリストはゲームログから自動更新されます。
-    - 抽出元: `LOG_PATH`（`LOG_DIR` + `LOG_FILE`、`LOG_FILE` 未設定時は `ShooterGame.log`）
-    - 対象行: `IP for incoming account ... - IP x.x.x.x`
-    - ブラックリストに含まれるIPは自動追加しません。
+10. ホワイトリストは、ゲームサーバーのログを `start.sh` がリアルタイムで監視し、自動更新されます。
+    - 監視対象行: `IP for incoming account ... - IP x.x.x.x`
+    - 上記行を検出すると `knockd_ip_filter.sh white <ip> "EOSID:<id>"` を即座に実行します。
+    - ブラックリストに含まれる IP は自動追加しません（`knockd_ip_filter.sh white` 内で判定）。
 11. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.ts` 更新）を `manager.sh unpause` 側で保証します。
 
 ## knockd IPリストの保存先
@@ -48,6 +47,21 @@
 
 - ホワイト/ブラックリスト: 1行1IPv4、`#` コメント可
 - グレーリスト: `ip|hostname|first_seen|last_seen|hit_count|last_reason`
+
+### knockd_ip_filter.sh コマンド
+
+- `knockd_ip_filter.sh` : Usage を表示します（終了コード 0）。
+- `knockd_ip_filter.sh unpause <ip>` : `ip` がブラックリストに無ければ `manager unpause --apply` を実行します。
+- `knockd_ip_filter.sh check <ip>` : `ip` が各リストに存在するかを JSON で出力します。
+- `knockd_ip_filter.sh white <ip> [comment]` : `ip` をホワイトリストへ登録/更新し、ブラックリストとグレーリストから同一 `ip` を除去します。
+- `knockd_ip_filter.sh black <ip> [comment]` : `ip` をブラックリストへ登録/更新し、ホワイトリストとグレーリストから同一 `ip` を除去します。
+
+補足:
+
+- IPv4 のみを受け付けます。
+- `white` / `black` で `comment` を省略した場合、グレーリストの `hostname|first_seen|last_seen|hit_count|last_reason` をコメントとして利用します。
+- knockd 互換のため、第一引数が IPv4 の場合は `unpause <ip>` として扱います（既存 `%IP%` 呼び出しを維持）。
+- IP は最終状態としてホワイト/ブラック/グレーの排他扱いです（更新中に一時的な重複が発生する瞬間は許容）。
 
 ## ノード単位の一時無効化
 

@@ -310,14 +310,24 @@ write_last_player_map() {
 process_log_line() {
     local line
     line=$(echo -n "$1" | tr -d '\r\n')
+    # The log lines have a format like:
+    # [2024.06.01-12.34.56:789][ 123]LogTemp: Some message
     local -r log_head_regex='^\[[0-9]{4}\.[0-9]{2}\.[0-9]{2}\-[0-9]{2}\.[0-9]{2}\.[0-9]{2}:[0-9]{3}\]\[[0-9 ]{1,8}\](.+)'
     local -r startup_regex='Server has completed startup'
+    # IP for incoming account 00023e876b964cd3b6f01a9d7040d038 - IP 58.188.97.144
+    local -r incoming_regex='IP for incoming account ([a-zA-Z0-9]+) - IP ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}).*'
     if [[ "$line" =~ $log_head_regex ]]; then
         line="${BASH_REMATCH[1]}"
         if [[ "$line" =~ $startup_regex ]]; then
             DISCORD_MSG_UP="${DISCORD_MSG_UP:-The Server is up}"
             DiscordMessage "Started $SESSION_NAME" "${DISCORD_MSG_UP}" "success"
             LogSuccess "Server is up."
+        elif [[ "$line" =~ $incoming_regex ]]; then
+            local -r eosid="${BASH_REMATCH[1]}"
+            local -r ip="${BASH_REMATCH[2]}"
+            if [ -x "/opt/autopause/knockd_ip_filter.sh" ]; then
+                /opt/autopause/knockd_ip_filter.sh white "$ip" "EOSID:$eosid" || true
+            fi
         fi
         local -r log_body_regex='^[0-9]{4}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}: (.+)$'
         if [[ "$line" =~ $log_body_regex ]]; then
