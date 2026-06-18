@@ -15,13 +15,18 @@ if [ "${AUTO_PAUSE_ENABLED,,}" == "true" ]; then
     AUTO_PAUSE_KNOCKD_LOG_PATH="${AUTO_PAUSE_KNOCKD_LOG_PATH:-${AUTO_PAUSE_WORK_DIR}/knockd.log}"
 
     ensure_arkuser_file() {
-        local file_path="$1"
-        local mode="${2:-664}"
-        install -o arkuser -g arkuser -m "$mode" /dev/null "$file_path" 2>/dev/null || {
-            : > "$file_path"
-            chown arkuser:arkuser "$file_path" 2>/dev/null || true
-            chmod "$mode" "$file_path" 2>/dev/null || true
-        }
+        local -r file_path="$1"
+        local -r mode="${2:-664}"
+        local -r truncate="${3:-false}"
+        local -r initial_content="${4:-}"
+
+        mkdir -p "$(dirname "$file_path")" 2>/dev/null || true
+        if [[ ! -e "$file_path" ]] || [[ "$truncate" == "true" ]]; then
+            echo -n "$initial_content" > "$file_path"
+        fi
+
+        chown arkuser:arkuser "$file_path" 2>/dev/null || true
+        chmod "$mode" "$file_path" 2>/dev/null || true
     }
 
     mkdir -p "$AUTO_PAUSE_WORK_DIR" 2>/dev/null || true
@@ -32,37 +37,14 @@ if [ "${AUTO_PAUSE_ENABLED,,}" == "true" ]; then
     rm -f "$AUTO_PAUSE_SLEEP_FLAG" "$AUTO_PAUSE_WAKE_FLAG" 2>/dev/null || true
     rm -f "$EOS_SESSION_TEMPLATE" "$EOS_CREDS_FILE" 2>/dev/null || true
     # Truncate logs and remove temporary captures to avoid confusion on new session
-    ensure_arkuser_file "$AUTO_PAUSE_LOG_PATH" 644
-    ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_LOG_PATH" 644
-    ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_STDOUT" 644
-    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_LOG_PATH" 644
-    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" 664
-    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" 664
-    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" 664
-
-    if [[ ! -s "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" ]]; then
-        {
-            echo "# knockd whitelist"
-            echo "# one IPv4 per line, comments are allowed"
-        } > "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH"
-        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" 2>/dev/null || true
-    fi
-
-    if [[ ! -s "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" ]]; then
-        {
-            echo "# knockd blacklist"
-            echo "# one IPv4 per line, comments are allowed"
-        } > "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH"
-        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" 2>/dev/null || true
-    fi
-
-    if [[ ! -s "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" ]]; then
-        {
-            echo "# knockd greylist"
-            echo "# format: ip|hostname|first_seen|last_seen|hit_count|last_reason"
-        } > "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH"
-        chown arkuser:arkuser "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" 2>/dev/null || true
-    fi
+    ensure_arkuser_file "$AUTO_PAUSE_LOG_PATH" 644 true
+    ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_LOG_PATH" 644 true
+    ensure_arkuser_file "$AUTO_PAUSE_EOS_HB_AGENT_STDOUT" 644 true
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_LOG_PATH" 644 true
+    # Keep contents of whitelist/blacklist/greylist across restarts, but ensure they exist and have correct permissions.
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_WHITELIST_PATH" 664 false "# knockd whitelist\n# one IPv4 per line, comments are allowed"
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_BLACKLIST_PATH" 664 false "# knockd blacklist\n# one IPv4 per line, comments are allowed"
+    ensure_arkuser_file "$AUTO_PAUSE_KNOCKD_GREYLIST_PATH" 664 false "# knockd greylist\n# format: ip|hostname|first_seen|last_seen|hit_count|last_reason"
 
     export EOS_SESSION_TEMPLATE="${EOS_SESSION_TEMPLATE:-${AUTO_PAUSE_WORK_DIR}/session_template.json}"
     export EOS_CREDS_FILE="${EOS_CREDS_FILE:-${AUTO_PAUSE_WORK_DIR}/eos_creds.json}"
