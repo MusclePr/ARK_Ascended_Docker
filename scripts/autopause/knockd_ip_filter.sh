@@ -20,12 +20,14 @@ Usage:
     knockd_ip_filter.sh check <ipv4>
     knockd_ip_filter.sh white <ipv4> [comment]
     knockd_ip_filter.sh black <ipv4> [comment]
+    knockd_ip_filter.sh grey
 
 Notes:
     - IPv4 only.
     - Legacy mode is supported: if the first argument is an IPv4 address,
         it is handled as unpause <ipv4> for knockd backward compatibility.
     - white/black enforce exclusive membership across whitelist/blacklist/greylist.
+    - grey shows greylist entries and lets you promote selected IPs to white/black.
 EOF
 }
 
@@ -167,6 +169,139 @@ append_greylist() {
     if [[ -x "$GREYLIST_APPEND_SCRIPT" ]]; then
         "$GREYLIST_APPEND_SCRIPT" "$ip" "$reason" || true
     fi
+}
+
+# Populates GREYLIST_ROWS with pipe-delimited rows and GREYLIST_IPS with IPs only.
+declare -a GREYLIST_ROWS=()
+declare -a GREYLIST_IPS=()
+declare -a SELECTED_GREY_INDICES=()
+
+load_greylist_entries() {
+    GREYLIST_ROWS=()
+    GREYLIST_IPS=()
+
+    [[ -f "$GREYLIST_PATH" ]] || return 0
+
+    local line
+    local ip
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+
+        IFS='|' read -r ip _ <<< "$line"
+        ip="${ip//[[:space:]]/}"
+        [[ -z "$ip" ]] && continue
+
+        GREYLIST_ROWS+=("$line")
+        GREYLIST_IPS+=("$ip")
+    done < "$GREYLIST_PATH"
+}
+
+print_greylist_entries() {
+    local i
+    local ip
+    local host
+    local last_seen
+    local hit_count
+    local last_reason
+
+    for (( i=0; i<${#GREYLIST_ROWS[@]}; i++ )); do
+        IFS='|' read -r ip host _ last_seen hit_count last_reason <<< "${GREYLIST_ROWS[$i]}"
+        printf '%3d. %s | host=%s | hits=%s | last=%s | reason=%s\n' \
+            "$((i + 1))" "$ip" "$host" "$hit_count" "$last_seen" "$last_reason"
+    done
+}
+
+parse_grey_indices() {
+    local input="$1"
+    local max_index="$2"
+
+    SELECTED_GREY_INDICES=()
+    [[ -n "${input//[[:space:]]/}" ]] || return 2
+
+    local -A seen=()
+    local -a tokens=()
+    local token
+
+    read -r -a tokens <<< "$input"
+
+    for token in "${tokens[@]}"; do
+        if ! [[ "$token" =~ ^[0-9]+$ ]]; then
+            LogError "Invalid index: $token"
+            return 1
+        fi
+        if (( token < 1 || token > max_index )); then
+            LogError "Index out of range: $token (1-$max_index)"
+            return 1
+        fi
+        if [[ -z "${seen[$token]:-}" ]]; then
+            seen[$token]=1
+            SELECTED_GREY_INDICES+=("$token")
+        fi
+    done
+
+    [[ ${#SELECTED_GREY_INDICES[@]} -gt 0 ]] || return 2
+    return 0
+}
+
+do_grey() {
+    ensure_list_files
+    load_greylist_entries
+
+    if (( ${#GREYLIST_ROWS[@]} == 0 )); then
+        echo "no list"
+        return 0
+    fi
+
+    print_greylist_entries
+
+    # In non-interactive mode, show current entries and exit successfully.
+    if [[ ! -t 0 ]]; then
+        return 0
+    fi
+
+    local selected_input=""
+    read -r -p "select index (space separated, ENTER to cancel): " selected_input
+    if ! parse_grey_indices "$selected_input" "${#GREYLIST_ROWS[@]}"; then
+        case $? in
+            2)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    fi
+
+    local destination_input=""
+    local destination_target=""
+    read -r -p "destination [b=black, w=white, other=cancel]: " destination_input
+    case "${destination_input,,}" in
+        b)
+            destination_target="black"
+            ;;
+        w)
+            destination_target="white"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    local comment_input=""
+    read -r -p "comment (optional, ENTER to skip): " comment_input
+
+    local idx
+    local row_index
+    local ip
+    for idx in "${SELECTED_GREY_INDICES[@]}"; do
+        row_index=$((idx - 1))
+        ip="${GREYLIST_IPS[$row_index]}"
+        do_mark "$destination_target" "$ip" "$comment_input"
+    done
+
+    LogInfo "Processed ${#SELECTED_GREY_INDICES[@]} greylist entries to $destination_target"
+    return 0
 }
 
 do_unpause() {
@@ -345,6 +480,10 @@ case "$COMMAND" in
             exit 1
         fi
         do_mark "black" "$IP" "$COMMENT"
+        exit $?
+        ;;
+    grey)
+        do_grey
         exit $?
         ;;
     *)
