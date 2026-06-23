@@ -26,16 +26,12 @@
 5. サーバー休止遷移時に `autopause_controller.sh` が `eos_heartbeat.py` を起動し、休止中のみ定期的なハートビートを EOS へ送信します。
 6. 起床遷移時に `autopause_controller.sh` が `eos_heartbeat.py` を停止します。
 7. `manager pause` 実行時に `knockd` が起動し、クライアントのUDPアクセスを検知すると `knockd_ip_filter.sh` で送信元IPを判定します。
-8. IP 判定の優先順は「ブラックリスト優先」です。
-   - ブラックリスト一致: `unpause` せずに無視（グレーリストへ記録）
-   - ホワイトリスト一致: `manager.sh unpause` を実行
-    - どちらにも未登録: グレーリストへ記録したうえで `manager.sh unpause` を実行
-9. グレーリストには `ip|hostname|first_seen|last_seen|hit_count|last_reason` 形式で蓄積され、手動でブラックリスト昇格判断に利用できます。
-10. ホワイトリストは、ゲームサーバーのログを `start.sh` がリアルタイムで監視し、自動更新されます。
-    - 監視対象行: `IP for incoming account ... - IP x.x.x.x`
-    - 上記行を検出すると `knockd_ip_filter.sh white <ip> "EOSID:<id>"` を即座に実行します。
-    - ブラックリストに含まれる IP は自動追加しません（`knockd_ip_filter.sh white` 内で判定）。
-11. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.ts` 更新）を `manager.sh unpause` 側で保証します。
+8. `knockd_ip_filter.sh` の IP 判定フローは以下の通りです。
+   - **ブラックリスト一致**: `unpause` せずに無視（ログ記録のみ）
+   - **ホワイトリスト一致**: `manager unpause --apply` を実行してサーバーを起床
+   - **どちらにも未登録**: グレーリストへ記録したうえで `manager unpause --apply` を実行（オープンアクセス許可）
+9. グレーリストには `ip|hostname|first_seen|last_seen|hit_count|last_reason` 形式でアクセス情報が蓄積され、`knockd_ip_filter.sh grey` コマンドで対話的に確認・管理できます。
+10. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.ts` 更新）を `manager.sh unpause` 側で保証します。
 
 ## knockd IPリストの保存先
 
