@@ -54,6 +54,13 @@ list_has_ip() {
     grep -Eq "^[[:space:]]*${ip}([[:space:]]*(#.*)?)?$" "$list_file"
 }
 
+get_comment_from_ip_list() {
+    local list_file="$1"
+    local ip="$2"
+    [[ -f "$list_file" ]] || return 1
+    grep -E "^[[:space:]]*${ip}([[:space:]]*(#.*)?)?$" "$list_file" | tail -n 1 | sed -E 's/^[[:space:]]*'"$ip"'[[:space:]]*(#.*)?$/\1/; s/^#?[[:space:]]*//; s/[[:space:]]*$//'
+}
+
 json_escape() {
     local s="$1"
     s=${s//\\/\\\\}
@@ -318,9 +325,16 @@ do_unpause() {
         return 0
     fi
 
-    if list_has_ip "$WHITELIST_PATH" "$ip"; then
-        LogInfo "Accepted knockd unpause trigger from whitelisted IP: $ip"
-        manager unpause --apply "knockd connection from $ip"
+    local comment="$ip"
+    if comment=$(get_comment_from_ip_list "$WHITELIST_PATH" "$ip"); then
+        if [[ "$comment" =~ ^\"([^\"]+)\"[[:space:]]+\"([^\"]+)\"[[:space:]]+\"([^\"]+)\"$ ]]; then
+            #local -r eosid="${BASH_REMATCH[1]}"
+            local -r player="${BASH_REMATCH[2]}"
+            #local -r last_access="${BASH_REMATCH[3]}"
+            comment="$player"
+        fi
+        LogInfo "Accepted knockd unpause trigger from whitelisted IP: $ip # ${comment}"
+        manager unpause --apply "knockd connection from ${comment}"
         return $?
     fi
 

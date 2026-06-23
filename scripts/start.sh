@@ -260,8 +260,9 @@ manager start &
 
 
 write_last_player_map() {
-    local eosid="$1"
-    local server_map="$2"
+    local -r eosid="$1"
+    local -r server_map="$2"
+    local -r player="$3"
 
     if [[ -z "$eosid" ]]; then
         LogWarn "Skipping last map update: EOSID is empty"
@@ -292,7 +293,7 @@ write_last_player_map() {
         return 0
     fi
 
-    if ! printf '%s\n' "$map_name" > "$tmp_file" 2>/dev/null; then
+    if ! printf '%s\n%s\n' "$map_name" "$player" > "$tmp_file" 2>/dev/null; then
         rm -f "$tmp_file" 2>/dev/null || true
         LogWarn "Failed to write temp last map file for EOSID=${eosid}"
         return 0
@@ -305,6 +306,21 @@ write_last_player_map() {
     fi
 }
 
+detect_player_from_eosid() {
+    local -r eosid="$1"
+    local -r login_dir="/opt/arkserver/ShooterGame/Saved/Cluster/.login/${CLUSTER_ID}"
+    local -r target_file="${login_dir}/last_map_${eosid}.txt"
+
+    if [[ ! -f "$target_file" ]]; then
+        echo ""
+        return 1
+    fi
+
+    local player_name
+    player_name=$(sed -n '2p' "$target_file" 2>/dev/null || echo "")
+    echo "$player_name"
+    return 0
+}
 
 # Function to process log lines for Discord notifications
 process_log_line() {
@@ -325,8 +341,9 @@ process_log_line() {
         elif [[ "$line" =~ $incoming_regex ]]; then
             local -r eosid="${BASH_REMATCH[1]}"
             local -r ip="${BASH_REMATCH[2]}"
+            local -r player=$(detect_player_from_eosid "$eosid" || echo "unknown")
             if [ -x "/opt/autopause/knockd_ip_filter.sh" ]; then
-                /opt/autopause/knockd_ip_filter.sh white "$ip" "EOSID:$eosid" || true
+                /opt/autopause/knockd_ip_filter.sh white "$ip" "\"$eosid\" \"$player\" \"$(date -Is 2>/dev/null || date)\"" || true
             fi
         fi
         local -r log_body_regex='^[0-9]{4}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}: (.+)$'
@@ -339,24 +356,24 @@ process_log_line() {
             local -r server_regex='^SERVER: (.+)$'
 
             if [[ "$line" =~ $join_regex ]]; then
-                local player="${BASH_REMATCH[1]}"
-                local id="${BASH_REMATCH[2]}"
-                local platform="${BASH_REMATCH[3]}"
+                local -r player="${BASH_REMATCH[1]}"
+                local -r id="${BASH_REMATCH[2]}"
+                local -r platform="${BASH_REMATCH[3]}"
                 local platform_msg=""
                 if [ "$platform" != "None" ]; then
                     platform_msg=" / Platform: \`${platform}\`"
                 fi
 
-                write_last_player_map "$id" "${SERVER_MAP:-}"
+                write_last_player_map "$id" "${SERVER_MAP:-}" "$player"
 
                 local player_msg
                 DISCORD_MSG_JOINED="${DISCORD_MSG_JOINED:-"%s has joined"}"
                 player_msg="${DISCORD_MSG_JOINED//%s/$player}"
                 DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "joined"
             elif [[ "$line" =~ $left_regex ]]; then
-                local player="${BASH_REMATCH[1]}"
-                local id="${BASH_REMATCH[2]}"
-                local platform="${BASH_REMATCH[3]}"
+                local -r player="${BASH_REMATCH[1]}"
+                local -r id="${BASH_REMATCH[2]}"
+                local -r platform="${BASH_REMATCH[3]}"
                 local platform_msg=""
                 if [ "$platform" != "None" ]; then
                     platform_msg=" / Platform: \`${platform}\`"
@@ -366,20 +383,20 @@ process_log_line() {
                 player_msg="${DISCORD_MSG_LEFT//%s/$player}"
                 DiscordMessage "${player_msg} [${SERVER_MAP}]" "EOSID: \`${id}\`${platform_msg}" "left"
             elif [[ "$line" =~ $cheat_regex ]]; then
-                local command="${BASH_REMATCH[1]}"
-                local player="${BASH_REMATCH[2]}"
-                local arkid="${BASH_REMATCH[3]}"
-                local steamid="${BASH_REMATCH[4]}"
+                local -r command="${BASH_REMATCH[1]}"
+                local -r player="${BASH_REMATCH[2]}"
+                local -r arkid="${BASH_REMATCH[3]}"
+                local -r steamid="${BASH_REMATCH[4]}"
                 if [ "${DISCORD_NOTIFY_CHEAT,,}" = "true" ]; then
                     DiscordMessage "${player} [${SERVER_MAP}]" "ARKID: \`${arkid}\` / SteamID: \`${steamid}\` / Command: \`${command:0:4}...\`" "warn"
                 fi
             elif [[ "$line" =~ $message_regex ]]; then
-                local player="${BASH_REMATCH[1]}"
-                local id="${BASH_REMATCH[2]}"
-                local message="${BASH_REMATCH[3]}"
+                local -r player="${BASH_REMATCH[1]}"
+                local -r id="${BASH_REMATCH[2]}"
+                local -r message="${BASH_REMATCH[3]}"
                 DiscordMessage "${player} (${id})" "${message}"
             elif [[ "$line" =~ $server_regex ]]; then
-                local message="${BASH_REMATCH[1]}"
+                local -r message="${BASH_REMATCH[1]}"
                 DiscordMessage "SERVER [${SERVER_MAP}]" "${message}" "in-progress"
             fi
         fi
