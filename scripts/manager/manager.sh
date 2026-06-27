@@ -869,10 +869,6 @@ update() {
         shift
     done
 
-    # Always revoke start permission at the beginning of an update cycle.
-    # This prevents non-master nodes from starting while we are checking/updating shared volumes.
-    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
-
     local update_rc=0
     update_required
     update_rc=$?
@@ -886,6 +882,11 @@ update() {
     fi
 
     UPDATE_KEEP_LOCK=false
+
+    # Revoke start permission only when an actual update cycle proceeds.
+    # If update is not required (or update check is unavailable), keep the
+    # existing ready signal to avoid blocking non-master nodes unnecessarily.
+    rm -f "$MASTER_READY_FILE" 2>/dev/null || true
 
     local request_started_epoch
     request_started_epoch=$(date +%s)
