@@ -204,9 +204,11 @@ LogAction "GENERATING CRONTAB"
 CRONTAB_FILE="/home/arkuser/crontab"
 truncate -s 0 $CRONTAB_FILE
 
-LogInfo "Create Health Check Job"
-echo "$HEALTHCHECK_CRON_EXPRESSION bash /opt/healthcheck.sh" >> "$CRONTAB_FILE"
-supercronic -quiet -test -no-reap "$CRONTAB_FILE" || exit
+if [ "${HEALTHCHECK_SELFHEALING_ENABLED,,}" = true ]; then
+    LogInfo "Create Health Check Job"
+    echo "$HEALTHCHECK_CRON_EXPRESSION bash /opt/healthcheck.sh" >> "$CRONTAB_FILE"
+    supercronic -quiet -test -no-reap "$CRONTAB_FILE" || exit
+fi
 
 if [ "${AUTO_BACKUP_ENABLED,,}" = true ]; then
     LogInfo "AUTO_BACKUP_ENABLED=${AUTO_BACKUP_ENABLED,,}"
@@ -225,6 +227,7 @@ if [ "${AUTO_UPDATE_ENABLED,,}" = true ]; then
         LogInfo "Skipping auto-update cron registration because this node is not the cluster master"
     fi
 fi
+
 if [ -s "$CRONTAB_FILE" ]; then
     supercronic -split-logs -no-reap "$CRONTAB_FILE" 1>/dev/null &
     CRON_PID=$!

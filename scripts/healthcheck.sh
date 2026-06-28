@@ -3,16 +3,23 @@
 source "/opt/manager/helper.sh"
 
 if ! /usr/local/bin/manager health >/dev/null; then
-    # If manager reports unhealthy but the server status indicates it was
-    # intentionally stopped or paused, consider healthcheck successful so 
-    # orchestrators don't mark the container unhealthy.
-    if [[ -f "${STATUS_FILE}" ]]; then
-        status=$(cat "${STATUS_FILE}" 2>/dev/null || true)
-        # Treat explicit STOPPED, STOPPING, PAUSED, PAUSING or BLOCKED as healthy (no notification)
-        if [[ "${status}" == "STOPPED" || "${status}" == "STOPPING" || "${status}" == "PAUSED" || "${status}" == "PAUSING" || "${status}" == "BLOCKED" ]]; then
-            exit 0
-        fi
+    # Only RUNNING is considered strictly unhealthy when manager health fails.
+    # Transitional or intentionally stopped states are treated as healthy.
+    if [[ ! -f "${STATUS_FILE}" ]]; then
+        LogWarn "Server unhealthy (status file not found)"
+        exit 1
     fi
+
+    status=$(cat "${STATUS_FILE}" 2>/dev/null || true)
+    if [[ -z "${status}" || "${status}" == "UNKNOWN" ]]; then
+        LogWarn "Server unhealthy (status unknown)"
+        exit 1
+    fi
+
+    if [[ "${status}" != "RUNNING" ]]; then
+        exit 0
+    fi
+
     LogWarn "Server unhealthy"
     if [ "${HEALTHCHECK_SELFHEALING_ENABLED,,}" = true ]; then
         LogInfo "Starting Server"
