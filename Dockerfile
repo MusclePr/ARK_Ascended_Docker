@@ -59,7 +59,7 @@ RUN         set -ex; \
             mkdir -p /opt/steamcmd; \
             cd /opt/steamcmd; \
             curl "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar zxvf - ;\
-            curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | cut -d\" -f4 | egrep .tar.gz)"; \
+            curl -sLOJ "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton10-34/GE-Proton10-34.tar.gz"; \
             tar -xzf GE-Proton*.tar.gz -C /usr/local/bin/ --strip-components=1; \
             rm GE-Proton*.* \
             rm -f /etc/machine-id; \
@@ -67,8 +67,7 @@ RUN         set -ex; \
             rm /var/lib/dbus/machine-id; \
             dbus-uuidgen --ensure; \
             cd /tmp/; \
-            curl -sSL https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz > rcon.tar.gz; \
-            tar xvf rcon.tar.gz; \
+            curl -sSL https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz | tar zxvf -; \
             mv rcon-0.10.3-amd64_linux/rcon /usr/local/bin/;
 
 # Install tini
