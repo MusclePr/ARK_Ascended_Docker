@@ -1,4 +1,4 @@
-# 自動一時停止機能の設計
+# 自動一時停止(AUTO_PAUSE)機能の設計
 
 オンラインプレイヤーが0人の状態が一定期間続くと、専用サーバーをスリープ状態へ遷移させて一時停止する機能です。
 これによりゲーム内時間を停止し、省電力化を行います。
@@ -81,7 +81,7 @@
 - sleep 中に `disabled.lock` が作成された場合は、コントローラーが wake 遷移を行い RUNNING を維持します。
 - 操作は `manager autopause-disable` / `manager autopause-enable` / `manager autopause-status` を使用します。
 
-## 1. 代理送信エージェント
+## 代理送信エージェント
 
 - `scripts/autopause/eos_heartbeat.py` は、自律送信クライアントとして動作する。
 - 動作仕様:
@@ -105,6 +105,10 @@ Dockerコンテナ内では、`scripts/autopause/autopause_controller.sh` が sl
 - `eos_hb_agent.log`: エージェントの動作ログ
 - `eos_hb_agent_stdout.log`: エージェント標準出力/標準エラー
 - `knockd.log`: knockdのログ
+
+# 実装したもの
+
+- [Autopause ツール](scripts/autopause/README.ja.md)
 
 # キャプチャログ
 

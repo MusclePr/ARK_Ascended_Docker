@@ -40,7 +40,6 @@
     AUTO_UPDATE_CRON_EXPRESSION="0 * * * *"
     UPDATE_WARN_MINUTES=30
     ```
-  - クラスター構成では、`manager update` と `AUTO_UPDATE_ENABLED` による自動更新は `CLUSTER_MASTER=true` のコンテナのみが実行します。
 - **ヘルスチェック機能の導入**: コンテナの状態と実際のゲームプロセス（Wine/Proton）の状態を同期させ、異常検知時の自動再起動（自己修復）による安定稼働を図る仕組みが追加されました。
     ```ini
     SERVER_SHUTDOWN_TIMEOUT=30
@@ -52,13 +51,21 @@
 
 ### 2. MusclePr 版（本フォーク）独自の追加・改善点
 
-- 単一プログラム複数マップの実現。以下の課題を解決しました。
+- `./ark_data:/opt/arkserver` の共有化と、`CLUSTER_MASTER=true` のコンテナだけアップデートを担う様に変更し、単一プログラム複数マップの実現し、以下の課題を解決しました。
 
   ❌ マップを増やすたびに、9~11GB ずつディスク容量を圧迫していくのが嫌。
 
   ❌ 全マップのプログラムをアップデートしないといけない。
 
   ❌ MOD も設定もマップ単位に管理するのが面倒。
+
+- [AUTO PAUSE](AUTO_PAUSE.ja.md) の追加。ログイン人数が０の時にサーバーを休眠（PAUSE）させ、誰かがログインしてきたら起きる様にしました。
+
+- 最後にログインしたマップ名とプレイヤー名を保存する様にしました。これにより、[MusclePr/asaui (private)](https://github.com/MusclePr/asaui) などで追跡できるようにしました。
+  `ShooterGame/Saved/Cluster/.login/${CLUSTER_ID}/last_map_<EOSID>.txt`
+
+- 休眠（PAUSE）中にポートノックだけしてくる非クライアントに対して、無視できるように、IP のブラックリストを追加しました。
+  `docker exec -itu arkuser test_asa0 /opt/autopause/knockd_ip_filter.sh grey`
 
 #### 管理・自動化の強化
 - **クラスター内のサーバー同期**: 
@@ -148,13 +155,16 @@
 #### 動作確認環境の追加
 - `run.sh`
   ```bash
-  Usage: run.sh {up|down|build|push|shellcheck}
+  Usage: run.sh {up|down|build|push|shellcheck|exec|backup|restore}
   ```
   - up ... docker compose up -d
   - down ... docker compose down
   - build ... docker build
-  - push ... docker push
+  - push ... docker build --push
   - shellcheck ... shellcheck
+  - exec ... docker exec
+  - backup ... manager backup
+  - restore ... manager restore
 
 ## バックアップ／復元の変更（クラスター単位のバックアップ）
 
