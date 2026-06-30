@@ -31,7 +31,7 @@
    - **ホワイトリスト一致**: `manager unpause --apply` を実行してサーバーを起床
    - **どちらにも未登録**: グレーリストへ記録したうえで `manager unpause --apply` を実行（オープンアクセス許可）
 9. グレーリストには `ip|hostname|first_seen|last_seen|hit_count|last_reason` 形式でアクセス情報が蓄積され、`knockd_ip_filter.sh grey` コマンドで対話的に確認・管理できます。
-10. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.ts` 更新）を `manager.sh unpause` 側で保証します。
+10. 起床時（`manager unpause`）に `knockd` 常駐を停止し、フラグ整合（`sleep_*.flag` / `wake_*.flag` の整理、`last_active_*.epoch` 更新）を `manager.sh unpause` 側で保証します。
 
 ## knockd IPリストの保存先
 

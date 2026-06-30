@@ -249,7 +249,7 @@
 | `server_<PORT>/autopause/sleep.flag` | sleep 遷移成功時 (`autopause_controller.sh`) | wake 遷移時、または起動時初期化 (`autopause/init.sh`) | 現在サーバーが sleep 中であることを示すフラグ。 |
 | `server_<PORT>/autopause/wake.flag` | wake 要求時 (`autopause/helper.sh`) | wake 完了時、または起動時初期化 (`autopause/init.sh`) | sleep 中サーバーへの起床要求フラグ。 |
 | `server_<PORT>/autopause/controller.pid` | コントローラー起動時 (`autopause_controller.sh`) | コントローラー停止時 (`autopause_controller.sh`) | AUTO_PAUSE コントローラープロセスの PID。 |
-| `server_<PORT>/autopause/last_active.ts` | 起床直後/活動記録更新時 (`autopause/helper.sh`, `autopause_controller.sh`) | 明示削除時 | 最終活動時刻 (epoch 秒) を保持。再 pause 判定に使用。 |
+| `server_<PORT>/autopause/last_active.epoch` | 起床直後/活動記録更新時 (`autopause/helper.sh`, `autopause_controller.sh`) | 明示削除時 | 最終活動時刻 (epoch 秒) を保持。再 pause 判定に使用。 |
 | `server_<PORT>/autopause/autopause.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | AUTO_PAUSE コントローラーのメインログ。 |
 | `server_<PORT>/autopause/eos_hb_agent.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | EOS ハートビート処理の動作ログ。 |
 | `server_<PORT>/autopause/eos_hb_agent_stdout.log` | 起動時初期化 (`autopause/init.sh`) | ローテーションせず再起動時に truncate | EOS ハートビート処理の標準出力/標準エラー。 |
