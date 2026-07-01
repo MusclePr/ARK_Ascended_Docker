@@ -77,6 +77,30 @@ We list some configuration options that may be used to customize the server belo
 | ARK_EXTRA_OPTS | Extra ?Argument=Value to add to the startup command. | ?ServerCrosshair=true?OverrideStructurePlatformPrevention=true?OverrideOfficialDifficulty=5.0?ShowFloatingDamageText=true?AllowFlyerCarryPvE=true |
 | ARK_EXTRA_DASH_OPTS | Extra dash arguments to add to the startup command. | -ForceAllowCaveFlyers -ForceRespawnDinos -AllowRaidDinoFeeding=true -ActiveEvent=Summer |
 
+#### Auto-update with MOD checks
+
+When `AUTO_UPDATE_ENABLED=true` runs on the cluster master, update checks can include both server binaries and MOD metadata.
+
+- Steam app update checks always run as before.
+- MOD update checks run only when all of the following are true:
+  - `AUTO_UPDATE_ENABLED=true`
+  - `CURSEFORGE_API_KEY` is set and non-empty
+  - `MODS` contains at least one valid numeric CurseForge mod ID
+- MOD metadata is fetched from the CurseForge API (`/v1/mods`) and compared against cached metadata.
+
+Cache behavior:
+
+- After each server reaches RCON-ready, it fetches latest MOD metadata and writes:
+  - `/opt/arkserver/.signals/server_<PORT>/last_mods.json`
+- On clustered startup, the master waits until all nodes are RCON-ready, then compares all `last_mods.json` files.
+- If mismatch is detected, the master performs one cluster-wide maintenance restart to converge MOD state.
+
+Error handling:
+
+- If CurseForge returns HTTP 403, an error is logged indicating the API key may be invalid.
+- The API key value is never logged.
+- MOD check failures do not abort update flow; they are treated as "no MOD update detected" and Steam checks continue normally.
+
 To increase the available server memory, in [docker-compose.yml](./docker-compose.yml), increase the `deploy, resources, limits, memory: 16g` to a higher value.
 
 ### Running multiple instances (cluster)

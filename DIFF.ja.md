@@ -70,6 +70,11 @@
 #### 管理・自動化の強化
 - **クラスター内のサーバー同期**: 
   - 複数コンテナ間で同期制御を行い、データの整合性を保ちます。
+- **MOD 対応の自動更新判定**:
+  - `AUTO_UPDATE_ENABLED=true` かつ `CURSEFORGE_API_KEY` が設定され、`MODS` に有効な MOD ID がある場合、Steam 本体更新判定に加えて MOD メタデータ更新判定を行います。
+  - 各ノードは RCON ready 到達後に `last_mods.json` を更新します。
+  - マスターは全ノードの RCON ready 完了後に `last_mods.json` の整合性を検査し、不一致時は 1 回だけメンテナンス経路で全停止/全起動を行います。
+  - CurseForge API が 403 を返した場合は API キー誤りの可能性をログ出力し、MOD 更新判定はスキップして従来フローを継続します（キー値はログに出しません）。
 - **詳細な状態監視システム**:
   - `.signals/server_${SERVER_PORT}/status` ファイルを介して、コンテナ外部から「アップグレード中」「バックアップ中」などの詳細なステータスを確認可能。
 - **メンテナンスカウントダウン**:
@@ -249,6 +254,10 @@
 | ファイル名 | 作成タイミング (作成元) | 削除タイミング (生存期間) | 目的・用途 |
 | :--- | :--- | :--- | :--- |
 | `server_<PORT>/status` | サーバーの状態変化時 (`update_status`) | サーバー再起動時 | 外部監視用に、現在のサーバーの詳細ステータス（"Ready", "Updating", "Starting" 等）をテキストで保持します。 |
+| `server_<PORT>/last_mods.json` | サーバーが RCON ready 到達後 (`manager.sh`) | 次回の RCON ready 更新時に上書き | CurseForge から取得した MOD メタデータ（ID/date）の比較用キャッシュ。 |
+| `server_<PORT>/mod_cache_ready.flag` | サーバーが RCON ready 到達後 (`manager.sh`) | マスターが整合性監視開始時に全ノード分を再初期化 | そのノードの MOD キャッシュ比較準備が整ったことを示すフラグ。 |
+| `cluster/mod_cache_ready_watcher.pid` | マスターが整合性監視ワーカー起動時 (`manager.sh`) | 監視ワーカー終了時 | 全ノード RCON ready 待機と MOD キャッシュ整合性検査を行う監視プロセスの PID。 |
+| `cluster/mod_sync_restart_once.flag` | 不一致検知で再起動実行直前 (`manager.sh`) | 再起動後に整合した時、または次回判定で整合時 | MOD 不一致時の再起動を 1 回に制限するためのフラグ。 |
 
 ### AUTO_PAUSE 制御用
 `AUTO_PAUSE_ENABLED=true` の場合、`server_<PORT>/autopause/` 配下に AUTO_PAUSE 用の状態ファイル・ログ・キャッシュを保持します。

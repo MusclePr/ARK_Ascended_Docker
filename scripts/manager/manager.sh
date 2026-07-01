@@ -12,6 +12,10 @@ MSG_MAINTENANCE_COUNTDOWN_SOON="${MSG_MAINTENANCE_COUNTDOWN_SOON:-%d}"
 
 EOS_FILE=/opt/manager/.eos.config
 
+MOD_SYNC_RESTART_FLAG="${CLUSTER_SIGNALS_DIR}/mod_sync_restart_once.flag"
+MOD_CACHE_READY_WATCHER_PID_FILE="${CLUSTER_SIGNALS_DIR}/mod_cache_ready_watcher.pid"
+MOD_LAST_CACHE_FILE="${SERVER_SIGNALS_DIR}/last_mods.json"
+
 full_status_setup() {
     # Check PDB is still available
     if [[ ! -f "/opt/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb" ]]; then 
@@ -312,6 +316,18 @@ rcon_wait_ready() {
                 LogInfo "Signaling ready to cluster."
                 touch "$MASTER_READY_FILE" 2>/dev/null || true
             fi
+
+            # Refresh MOD cache on every node after startup completes.
+            mod_refresh_last_cache_after_start || true
+
+            # Mark this node as RCON-ready for MOD cache consistency timing.
+            mod_mark_rcon_ready_for_cache_check || true
+
+            # Master waits for the last node to become RCON-ready, then checks consistency.
+            if [ "${CLUSTER_MASTER,,}" == "true" ]; then
+                mod_start_cache_consistency_watcher || true
+            fi
+
             return 0
         fi
         sleep $interval
@@ -326,6 +342,358 @@ rcon_wait_ready() {
         LogWarn "Signaling ready anyway to prevent deadlock."
         touch "$MASTER_READY_FILE" 2>/dev/null || true
     fi
+    return 1
+}
+
+mod_cache_ready_flag_for_port() {
+    local port="$1"
+    local port_dir
+    port_dir=$(server_signals_dir_for_port "$port")
+    echo "${port_dir}/mod_cache_ready.flag"
+}
+
+mod_cache_file_for_port() {
+    local port="$1"
+    local port_dir
+    port_dir=$(server_signals_dir_for_port "$port")
+    echo "${port_dir}/last_mods.json"
+}
+
+mod_collect_ids_json() {
+    if [[ -z "${MODS:-}" ]]; then
+        return 1
+    fi
+
+    local id
+    local -a raw=() ids=()
+    IFS=',' read -r -a raw <<< "${MODS}"
+    for id in "${raw[@]}"; do
+        id="$(echo "$id" | tr -d '[:space:]')"
+        if [[ "$id" =~ ^[0-9]+$ ]]; then
+            ids+=("$id")
+        fi
+    done
+
+    if (( ${#ids[@]} == 0 )); then
+        return 1
+    fi
+
+    printf '%s\n' "${ids[@]}" | sort -n -u | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)'
+}
+
+mod_fetch_latest_json() {
+    local ids_json payload body_file http_code normalized
+    local api_url="https://api.curseforge.com/v1/mods"
+
+    if ! ids_json=$(mod_collect_ids_json); then
+        return 1
+    fi
+
+    if [[ -z "${CURSEFORGE_API_KEY:-}" ]]; then
+        return 1
+    fi
+
+    payload=$(jq -nc --argjson ids "$ids_json" '{modIds:$ids}')
+    body_file=$(mktemp)
+    http_code=$(curl -sS -L --max-time "${MOD_CHECK_TIMEOUT_SEC:-20}" \
+        -H "x-api-key: ${CURSEFORGE_API_KEY}" \
+        -H "Content-Type: application/json" \
+        --data "$payload" \
+        --output "$body_file" \
+        --write-out "%{http_code}" \
+        "$api_url" 2>/dev/null || echo "000")
+
+    if [[ "$http_code" == "403" ]]; then
+        LogError "CurseForge API returned 403. CURSEFORGE_API_KEY may be invalid; skipping MOD update check."
+        rm -f "$body_file"
+        return 3
+    fi
+
+    if [[ "$http_code" != "200" ]]; then
+        LogWarn "CurseForge API request failed (HTTP ${http_code}). Skipping MOD update check."
+        rm -f "$body_file"
+        return 2
+    fi
+
+    if ! normalized=$(jq -ce '[.data[] | {id:(.id|tonumber), date:(.dateModified // "")}] | sort_by(.id)' "$body_file" 2>/dev/null); then
+        LogWarn "Failed to parse CurseForge API response. Skipping MOD update check."
+        rm -f "$body_file"
+        return 2
+    fi
+
+    rm -f "$body_file"
+    echo "$normalized"
+    return 0
+}
+
+mod_read_cached_json() {
+    local cache_file json
+    cache_file="$MOD_LAST_CACHE_FILE"
+
+    if [[ ! -s "$cache_file" ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    if json=$(jq -ce '.' "$cache_file" 2>/dev/null); then
+        echo "$json"
+        return 0
+    fi
+
+    LogWarn "Invalid MOD cache file detected at ${cache_file}. Treating cache as empty."
+    echo "[]"
+    return 0
+}
+
+mod_write_cached_json() {
+    local json="$1"
+    local cache_file cache_dir tmp_file
+    cache_file="$MOD_LAST_CACHE_FILE"
+    cache_dir=$(dirname "$cache_file")
+
+    mkdir -p "$cache_dir" 2>/dev/null || true
+    tmp_file=$(mktemp "${cache_dir}/.last_mods.XXXXXX") || return 1
+
+    if ! jq -ce '.' <<< "$json" > "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mv -f "$tmp_file" "$cache_file"
+    return 0
+}
+
+mod_refresh_last_cache_after_start() {
+    local latest_json
+
+    if [[ -z "${CURSEFORGE_API_KEY:-}" ]]; then
+        return 0
+    fi
+
+    if ! mod_collect_ids_json >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! latest_json=$(mod_fetch_latest_json); then
+        return 1
+    fi
+
+    if mod_write_cached_json "$latest_json"; then
+        LogInfo "Saved latest MOD cache to ${MOD_LAST_CACHE_FILE}."
+        return 0
+    fi
+
+    LogWarn "Failed to save MOD cache to ${MOD_LAST_CACHE_FILE}."
+    return 1
+}
+
+mod_mark_rcon_ready_for_cache_check() {
+    local ready_flag
+    ready_flag=$(mod_cache_ready_flag_for_port "$SERVER_PORT")
+    mkdir -p "$(dirname "$ready_flag")" 2>/dev/null || true
+    touch "$ready_flag" 2>/dev/null || true
+}
+
+mod_clear_all_rcon_ready_flags() {
+    local port flag
+    if ! initialize_cluster_ports; then
+        return 1
+    fi
+    for port in "${CLUSTER_PORTS[@]}"; do
+        flag=$(mod_cache_ready_flag_for_port "$port")
+        rm -f "$flag" 2>/dev/null || true
+    done
+    return 0
+}
+
+mod_wait_for_last_node_rcon_ready() {
+    local timeout elapsed interval port flag
+    timeout="${MOD_CLUSTER_READY_WAIT_TIMEOUT_SEC:-900}"
+    interval=5
+    elapsed=0
+
+    if ! initialize_cluster_ports; then
+        return 1
+    fi
+
+    while (( elapsed < timeout )); do
+        local all_ready=true
+        for port in "${CLUSTER_PORTS[@]}"; do
+            flag=$(mod_cache_ready_flag_for_port "$port")
+            if [[ ! -f "$flag" ]]; then
+                all_ready=false
+                break
+            fi
+        done
+
+        if [[ "$all_ready" == true ]]; then
+            return 0
+        fi
+
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    LogWarn "Timed out waiting for all nodes to become RCON-ready (${timeout}s)."
+    return 1
+}
+
+mod_start_cache_consistency_watcher() {
+    local pid_file existing_pid
+    pid_file="$MOD_CACHE_READY_WATCHER_PID_FILE"
+
+    mkdir -p "$CLUSTER_SIGNALS_DIR" 2>/dev/null || true
+
+    if [[ -f "$pid_file" ]]; then
+        existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$pid_file" 2>/dev/null || true
+    fi
+
+    if ! mod_clear_all_rcon_ready_flags; then
+        return 1
+    fi
+
+    # Master is already RCON-ready at this point.
+    mod_mark_rcon_ready_for_cache_check || true
+
+    (
+        if mod_wait_for_last_node_rcon_ready; then
+            mod_ensure_cluster_cache_consistency_once || true
+        fi
+        rm -f "$pid_file" 2>/dev/null || true
+    ) &
+
+    echo "$!" > "$pid_file" 2>/dev/null || true
+    return 0
+}
+
+mod_all_cluster_caches_match() {
+    local base_json base_port port cache_file current_json
+
+    if ! initialize_cluster_ports; then
+        return 1
+    fi
+
+    base_port="${CLUSTER_PORTS[0]}"
+    cache_file=$(mod_cache_file_for_port "$base_port")
+    if [[ ! -s "$cache_file" ]]; then
+        return 1
+    fi
+    if ! base_json=$(jq -S -c '.' "$cache_file" 2>/dev/null); then
+        return 1
+    fi
+
+    for port in "${CLUSTER_PORTS[@]}"; do
+        cache_file=$(mod_cache_file_for_port "$port")
+        if [[ ! -s "$cache_file" ]]; then
+            return 1
+        fi
+        if ! current_json=$(jq -S -c '.' "$cache_file" 2>/dev/null); then
+            return 1
+        fi
+        if [[ "$current_json" != "$base_json" ]]; then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+mod_wait_for_all_cluster_caches() {
+    local timeout elapsed interval port cache_file
+    timeout="${MOD_CLUSTER_CACHE_WAIT_TIMEOUT_SEC:-600}"
+    interval=5
+    elapsed=0
+
+    if ! initialize_cluster_ports; then
+        return 1
+    fi
+
+    while (( elapsed < timeout )); do
+        local all_present=true
+        for port in "${CLUSTER_PORTS[@]}"; do
+            cache_file=$(mod_cache_file_for_port "$port")
+            if [[ ! -s "$cache_file" ]]; then
+                all_present=false
+                break
+            fi
+        done
+
+        if [[ "$all_present" == true ]]; then
+            return 0
+        fi
+
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    LogWarn "Timed out waiting for all node MOD caches (${timeout}s)."
+    return 1
+}
+
+mod_ensure_cluster_cache_consistency_once() {
+    local restart_flag
+
+    if [[ "${CLUSTER_MASTER,,}" != "true" ]]; then
+        return 0
+    fi
+
+    if [[ -z "${CURSEFORGE_API_KEY:-}" ]]; then
+        return 0
+    fi
+
+    if ! mod_collect_ids_json >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! initialize_cluster_ports; then
+        return 1
+    fi
+
+    if (( ${#CLUSTER_PORTS[@]} <= 1 )); then
+        return 0
+    fi
+
+    restart_flag="$MOD_SYNC_RESTART_FLAG"
+
+    if ! mod_wait_for_all_cluster_caches; then
+        return 0
+    fi
+
+    if mod_all_cluster_caches_match; then
+        LogInfo "MOD caches are consistent across all cluster nodes."
+        rm -f "$restart_flag" 2>/dev/null || true
+        return 0
+    fi
+
+    if [[ -f "$restart_flag" ]]; then
+        LogError "MOD cache mismatch still detected after one restart attempt. Please verify cluster state manually."
+        return 1
+    fi
+
+    touch "$restart_flag" 2>/dev/null || true
+    LogWarn "Detected MOD cache mismatch across cluster nodes. Restarting cluster once to synchronize MOD state."
+    DiscordMessage "Mod Sync" "MOD update synchronization detected. Restarting all cluster nodes." "warn"
+
+    local request_started_epoch
+    request_started_epoch=$(date +%s)
+    if ! enter_maintenance stop "$request_started_epoch"; then
+        LogError "Failed to enter maintenance for MOD synchronization restart."
+        return 1
+    fi
+
+    master_release_after_start 900
+
+    if mod_wait_for_all_cluster_caches && mod_all_cluster_caches_match; then
+        LogSuccess "MOD cache synchronized across cluster nodes."
+        rm -f "$restart_flag" 2>/dev/null || true
+        return 0
+    fi
+
+    LogError "MOD cache mismatch remains after restart. Manual intervention is required."
     return 1
 }
 
@@ -802,8 +1170,10 @@ restart() {
 }
 
 update_required() {
-  LogInfo "Checking for new Server updates"
-  local CURRENT_MANIFEST LATEST_MANIFEST temp_file http_code updateAvailable
+    LogInfo "Checking for new Server updates"
+    local CURRENT_MANIFEST LATEST_MANIFEST temp_file http_code updateAvailable
+        local mod_update_available
+        mod_update_available=false
     local manifest_file
     manifest_file="/opt/arkserver/steamapps/appmanifest_${ASA_APPID}.acf"
   #check steam for latest version
@@ -839,19 +1209,31 @@ update_required() {
       return 0
   fi
 
-  # Log any updates available
-  local updateAvailable=false
+    # Log any updates available
+    local updateAvailable=false
   if [ "$CURRENT_MANIFEST" != "$LATEST_MANIFEST" ]; then
     LogWarn "An Update Is Available: $CURRENT_MANIFEST -> $LATEST_MANIFEST."
     updateAvailable=true
   fi
+
+    # MOD update check is enabled only when auto-update is enabled and API key is present.
+    if [[ "${AUTO_UPDATE_ENABLED,,}" == "true" ]] && [[ -n "${CURSEFORGE_API_KEY:-}" ]] && mod_collect_ids_json >/dev/null 2>&1; then
+            local latest_mods cached_mods
+            if latest_mods=$(mod_fetch_latest_json); then
+                    cached_mods=$(mod_read_cached_json)
+                    if [[ "$(jq -S -c '.' <<< "$latest_mods")" != "$(jq -S -c '.' <<< "$cached_mods")" ]]; then
+                            LogWarn "MOD update is available (cached MOD metadata differs from latest)."
+                            mod_update_available=true
+                    fi
+            fi
+    fi
 
   if [ -n "${TARGET_MANIFEST_ID}" ] && [ "$CURRENT_MANIFEST" != "${TARGET_MANIFEST_ID}" ]; then
     LogWarn "Game not at target version. Target Version: ${TARGET_MANIFEST_ID}"
     return 0
   fi
 
-    if [ "$updateAvailable" == true ]; then
+        if [ "$updateAvailable" == true ] || [ "$mod_update_available" == true ]; then
         return 0
     fi
 
