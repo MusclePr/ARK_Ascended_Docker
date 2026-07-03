@@ -38,14 +38,10 @@ cmd="${cmd}${ARK_EXTRA_OPTS}"
 
 ark_flags=()
 
-if [ -n "$MAP_MOD_ID" ]; then
-    #ark_flags+=("-MapModID=${MAP_MOD_ID}")
-    ark_flags+=("-passivemods=${MAP_MOD_ID}")
-fi
-
 # Install mods
-if [ -n "$MODS" ]; then
-    ark_flags+=("-mods=${MODS}")
+if [ -n "$MODS" ] || [ -n "$MAP_MOD_ID" ]; then
+    mods="${MODS:+${MODS%,},}${MAP_MOD_ID}"
+    ark_flags+=("-mods=${mods}")
 fi
 
 if [ -n "$LOG_FILE" ]; then
