@@ -1264,49 +1264,49 @@ restart() {
 update_required() {
     LogInfo "Checking for new Server updates"
     local CURRENT_MANIFEST LATEST_MANIFEST temp_file http_code updateAvailable
-        local mod_update_available
-        mod_update_available=false
+    local mod_update_available
+    mod_update_available=false
     local manifest_file
     manifest_file="/opt/arkserver/steamapps/appmanifest_${ASA_APPID}.acf"
-  #check steam for latest version
-  temp_file=$(mktemp)
-  http_code=$(curl "https://api.steamcmd.net/v1/info/$ASA_APPID" --output "$temp_file" --silent --location --write-out "%{http_code}")
-  if [ "$http_code" -ne 200 ]; then
-      LogError "There was a problem reaching the Steam api. Unable to check for updates!"
-      DiscordMessage "Install" "There was a problem reaching the Steam api. Unable to check for updates!" "failure"
-      rm "$temp_file"
-      return 2
-  fi
+    #check steam for latest version
+    temp_file=$(mktemp)
+    http_code=$(curl "https://api.steamcmd.net/v1/info/$ASA_APPID" --output "$temp_file" --silent --location --write-out "%{http_code}")
+    if [ "$http_code" -ne 200 ]; then
+        LogError "There was a problem reaching the Steam api. Unable to check for updates!"
+        DiscordMessage "Install" "There was a problem reaching the Steam api. Unable to check for updates!" "failure"
+        rm "$temp_file"
+        return 2
+    fi
 
-  # Parse temp file for manifest id
-  LATEST_MANIFEST=$(jq '.data."'"$ASA_APPID"'".depots."'"$((ASA_APPID + 1))"'".manifests.public.gid' <"$temp_file" | sed -r 's/.*("[0-9]+")$/\1/' | tr -d '"')
-  rm "$temp_file"
+    # Parse temp file for manifest id
+    LATEST_MANIFEST=$(jq '.data."'"$ASA_APPID"'".depots."'"$((ASA_APPID + 1))"'".manifests.public.gid' <"$temp_file" | sed -r 's/.*("[0-9]+")$/\1/' | tr -d '"')
+    rm "$temp_file"
 
-  if [ -z "$LATEST_MANIFEST" ]; then
-      LogError "The server response does not contain the expected BuildID. Unable to check for updates!"
-      DiscordMessage "Install" "Steam servers response does not contain the expected BuildID. Unable to check for updates!" "failure"
-      return 2
-  fi
+    if [ -z "$LATEST_MANIFEST" ]; then
+        LogError "The server response does not contain the expected BuildID. Unable to check for updates!"
+        DiscordMessage "Install" "Steam servers response does not contain the expected BuildID. Unable to check for updates!" "failure"
+        return 2
+    fi
 
-  # If server is not installed yet, update is required.
-  if [[ ! -f "$manifest_file" ]]; then
-      LogWarn "Local manifest not found (${manifest_file}). Treating update as required (fresh install)."
-      return 0
-  fi
+    # If server is not installed yet, update is required.
+    if [[ ! -f "$manifest_file" ]]; then
+        LogWarn "Local manifest not found (${manifest_file}). Treating update as required (fresh install)."
+        return 0
+    fi
 
-  # Parse current manifest from steam files
-  CURRENT_MANIFEST=$(awk '/manifest/{count++} count==2 {print $2; exit}' "$manifest_file" 2>/dev/null | tr -d '"')
-  if [[ -z "$CURRENT_MANIFEST" ]]; then
-      LogWarn "Unable to read current manifest from ${manifest_file}. Treating update as required."
-      return 0
-  fi
+    # Parse current manifest from steam files
+    CURRENT_MANIFEST=$(awk '/manifest/{count++} count==2 {print $2; exit}' "$manifest_file" 2>/dev/null | tr -d '"')
+    if [[ -z "$CURRENT_MANIFEST" ]]; then
+        LogWarn "Unable to read current manifest from ${manifest_file}. Treating update as required."
+        return 0
+    fi
 
     # Log any updates available
     local updateAvailable=false
-  if [ "$CURRENT_MANIFEST" != "$LATEST_MANIFEST" ]; then
-    LogWarn "An Update Is Available: $CURRENT_MANIFEST -> $LATEST_MANIFEST."
-    updateAvailable=true
-  fi
+    if [ "$CURRENT_MANIFEST" != "$LATEST_MANIFEST" ]; then
+        LogWarn "An Update Is Available: $CURRENT_MANIFEST -> $LATEST_MANIFEST."
+        updateAvailable=true
+    fi
 
     # MOD update check is enabled only when auto-update is enabled and API key is present.
     if [[ "${AUTO_UPDATE_ENABLED,,}" == "true" ]] && [[ -n "${CURSEFORGE_API_KEY:-}" ]] && mod_collect_ids_json >/dev/null 2>&1; then
@@ -1336,12 +1336,12 @@ update_required() {
             fi
     fi
 
-  if [ -n "${TARGET_MANIFEST_ID}" ] && [ "$CURRENT_MANIFEST" != "${TARGET_MANIFEST_ID}" ]; then
-    LogWarn "Game not at target version. Target Version: ${TARGET_MANIFEST_ID}"
-    return 0
-  fi
+    if [ -n "${TARGET_MANIFEST_ID}" ] && [ "$CURRENT_MANIFEST" != "${TARGET_MANIFEST_ID}" ]; then
+        LogWarn "Game not at target version. Target Version: ${TARGET_MANIFEST_ID}"
+        return 0
+    fi
 
-        if [ "$updateAvailable" == true ] || [ "$mod_update_available" == true ]; then
+    if [ "$updateAvailable" == true ] || [ "$mod_update_available" == true ]; then
         return 0
     fi
 
