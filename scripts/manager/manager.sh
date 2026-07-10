@@ -381,6 +381,90 @@ mod_collect_ids_json() {
     printf '%s\n' "${ids[@]}" | sort -n -u | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)'
 }
 
+mod_cache_normalize_json() {
+    local json="$1"
+
+    jq -ce '
+        if type != "array" then [] else . end
+        | map(
+            if (type == "object") and (.id != null) then
+                {
+                    id: (.id | tonumber),
+                    name: ((.name // "") | tostring),
+                    date: ((.date // .dateModified // "") | tostring)
+                }
+            else
+                empty
+            end
+        )
+        | sort_by(.id)
+    ' <<< "$json" 2>/dev/null
+}
+
+mod_compare_projection_json() {
+    local json="$1"
+
+    jq -ce '
+        if type != "array" then [] else . end
+        | map({id: (.id | tonumber), date: ((.date // "") | tostring)})
+        | sort_by(.id)
+    ' <<< "$json" 2>/dev/null
+}
+
+mod_diff_updated_entries_json() {
+    local latest_json="$1"
+    local cached_json="$2"
+
+    jq -nce --argjson latest "$latest_json" --argjson cached "$cached_json" '
+        def to_map(arr):
+            reduce arr[] as $item ({}; .[($item.id | tostring)] = $item);
+
+        ($latest
+            | map({
+                id: (.id | tonumber),
+                name: ((.name // "") | tostring),
+                date: ((.date // "") | tostring)
+            })
+        ) as $latest_norm
+        | ($cached
+            | map({
+                id: (.id | tonumber),
+                date: ((.date // "") | tostring)
+            })
+        ) as $cached_norm
+        | (to_map($cached_norm)) as $cached_map
+        | [
+            $latest_norm[]
+            | select((($cached_map[(.id | tostring)].date // "") != .date))
+        ]
+        | sort_by(.id)
+    ' 2>/dev/null
+}
+
+mod_diff_removed_ids_json() {
+    local latest_json="$1"
+    local cached_json="$2"
+
+    jq -nce --argjson latest "$latest_json" --argjson cached "$cached_json" '
+        def to_map(arr):
+            reduce arr[] as $item ({}; .[($item.id | tostring)] = true);
+
+        ($latest
+            | map({id: (.id | tonumber)})
+        ) as $latest_norm
+        | ($cached
+            | map({id: (.id | tonumber)})
+        ) as $cached_norm
+        | (to_map($latest_norm)) as $latest_map
+        | [
+            $cached_norm[]
+            | select(($latest_map[(.id | tostring)] // false) | not)
+            | .id
+        ]
+        | sort
+    ' 2>/dev/null
+}
+
 mod_fetch_latest_json() {
     local ids_json payload body_file http_code normalized
     local api_url="https://api.curseforge.com/v1/mods"
@@ -415,7 +499,7 @@ mod_fetch_latest_json() {
         return 2
     fi
 
-    if ! normalized=$(jq -ce '[.data[] | {id:(.id|tonumber), date:(.dateModified // "")}] | sort_by(.id)' "$body_file" 2>/dev/null); then
+    if ! normalized=$(jq -ce '[.data[] | {id:(.id|tonumber), name:(.name // ""), date:(.dateModified // "")}] | sort_by(.id)' "$body_file" 2>/dev/null); then
         LogWarn "Failed to parse CurseForge API response. Skipping MOD update check."
         rm -f "$body_file"
         return 2
@@ -436,8 +520,10 @@ mod_read_cached_json() {
     fi
 
     if json=$(jq -ce '.' "$cache_file" 2>/dev/null); then
-        echo "$json"
-        return 0
+        if json=$(mod_cache_normalize_json "$json"); then
+            echo "$json"
+            return 0
+        fi
     fi
 
     LogWarn "Invalid MOD cache file detected at ${cache_file}. Treating cache as empty."
@@ -571,7 +657,7 @@ mod_start_cache_consistency_watcher() {
 }
 
 mod_all_cluster_caches_match() {
-    local base_json base_port port cache_file current_json
+    local base_json base_cmp_json base_port port cache_file current_json current_cmp_json
 
     if ! initialize_cluster_ports; then
         return 1
@@ -585,6 +671,9 @@ mod_all_cluster_caches_match() {
     if ! base_json=$(jq -S -c '.' "$cache_file" 2>/dev/null); then
         return 1
     fi
+    if ! base_cmp_json=$(mod_compare_projection_json "$base_json"); then
+        return 1
+    fi
 
     for port in "${CLUSTER_PORTS[@]}"; do
         cache_file=$(mod_cache_file_for_port "$port")
@@ -594,7 +683,10 @@ mod_all_cluster_caches_match() {
         if ! current_json=$(jq -S -c '.' "$cache_file" 2>/dev/null); then
             return 1
         fi
-        if [[ "$current_json" != "$base_json" ]]; then
+        if ! current_cmp_json=$(mod_compare_projection_json "$current_json"); then
+            return 1
+        fi
+        if [[ "$current_cmp_json" != "$base_cmp_json" ]]; then
             return 1
         fi
     done
@@ -1218,11 +1310,27 @@ update_required() {
 
     # MOD update check is enabled only when auto-update is enabled and API key is present.
     if [[ "${AUTO_UPDATE_ENABLED,,}" == "true" ]] && [[ -n "${CURSEFORGE_API_KEY:-}" ]] && mod_collect_ids_json >/dev/null 2>&1; then
-            local latest_mods cached_mods
+            local latest_mods cached_mods latest_mods_cmp cached_mods_cmp
+            local updated_mods removed_mod_ids
             if latest_mods=$(mod_fetch_latest_json); then
                     cached_mods=$(mod_read_cached_json)
-                    if [[ "$(jq -S -c '.' <<< "$latest_mods")" != "$(jq -S -c '.' <<< "$cached_mods")" ]]; then
+                    latest_mods_cmp=$(mod_compare_projection_json "$latest_mods")
+                    cached_mods_cmp=$(mod_compare_projection_json "$cached_mods")
+                    if [[ "$latest_mods_cmp" != "$cached_mods_cmp" ]]; then
                             LogWarn "MOD update is available (cached MOD metadata differs from latest)."
+                            if updated_mods=$(mod_diff_updated_entries_json "$latest_mods" "$cached_mods") && [[ "$updated_mods" != "[]" ]]; then
+                                LogWarn "Updated MOD details (id, name, date):"
+                                while IFS=$'\t' read -r mod_id mod_name mod_date; do
+                                    if [[ -z "$mod_name" ]]; then
+                                        mod_name="<unknown>"
+                                    fi
+                                    LogWarn "  - ${mod_id}: ${mod_name} (${mod_date})"
+                                done < <(jq -r '.[] | [(.id|tostring), ((.name // "") | gsub("[\\r\\n\\t]+"; " ")), (.date // "")] | @tsv' <<< "$updated_mods")
+                            fi
+
+                            if removed_mod_ids=$(mod_diff_removed_ids_json "$latest_mods" "$cached_mods") && [[ "$removed_mod_ids" != "[]" ]]; then
+                                LogWarn "Removed MOD IDs from current MODS list: $(jq -r 'map(tostring) | join(", ")' <<< "$removed_mod_ids")"
+                            fi
                             mod_update_available=true
                     fi
             fi
