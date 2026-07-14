@@ -30,7 +30,7 @@ ARG TZ=Etc/UTC
 # https://github.com/krallin/tini/releases
 ARG TINI_VERSION=v0.19.0
 # https://github.com/GloriousEggroll/proton-ge-custom/releases
-ARG PROTON_VERSION=GE-Proton11-1
+ARG PROTON_VERSION=GE-Proton10-34
 # https://github.com/gorcon/rcon-cli/releases
 ARG RCON_VERSION=0.10.3
 # https://github.com/mitmproxy/mitmproxy/releases
