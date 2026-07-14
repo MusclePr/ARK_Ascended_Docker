@@ -1402,6 +1402,8 @@ update() {
     warmup_log=$(mktemp)
     local max_retries
     max_retries=${STEAMCMD_RETRIES:-3}
+    local steamcmd_platform
+    steamcmd_platform=${STEAMCMD_PLATFORM:-windows}
     local attempt=1
 
     LogInfo "Warming up SteamCMD session (login + quit)"
@@ -1410,9 +1412,10 @@ update() {
 
     while (( attempt <= max_retries )); do
         LogInfo "Running SteamCMD update (attempt ${attempt}/${max_retries})"
+        LogInfo "SteamCMD platform: ${steamcmd_platform}"
 
         set -o pipefail
-        /opt/steamcmd/steamcmd.sh +force_install_dir /opt/arkserver +login anonymous +app_update "${ASA_APPID}" validate +quit 2>&1 | tee "$steamcmd_log"
+        /opt/steamcmd/steamcmd.sh +@sSteamCmdForcePlatformType "${steamcmd_platform}" +force_install_dir /opt/arkserver +login anonymous +app_update "${ASA_APPID}" validate +quit 2>&1 | tee "$steamcmd_log"
         steamcmd_rc=${PIPESTATUS[0]}
         set +o pipefail
 
