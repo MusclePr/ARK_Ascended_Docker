@@ -30,7 +30,7 @@ ARG TZ=Etc/UTC
 # https://github.com/krallin/tini/releases
 ARG TINI_VERSION=v0.19.0
 # https://github.com/GloriousEggroll/proton-ge-custom/releases
-ARG PROTON_VERSION=tags/GE-Proton10-32
+ARG PROTON_VERSION=GE-Proton11-1
 # https://github.com/gorcon/rcon-cli/releases
 ARG RCON_VERSION=0.10.3
 # https://github.com/mitmproxy/mitmproxy/releases
@@ -91,7 +91,7 @@ RUN         set -ex; \
 # https://github.com/GloriousEggroll/proton-ge-custom
 RUN         set -ex; \
             cd /tmp/; \
-            curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/${PROTON_VERSION} | jq -r '.assets[].browser_download_url' | egrep .tar.gz)"; \
+            curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/tags/${PROTON_VERSION} | jq -r '.assets[].browser_download_url' | egrep "${PROTON_VERSION}\.tar\.gz")"; \
             tar -xzf GE-Proton*.tar.gz -C /usr/local/bin/ --strip-components=1; \
             rm GE-Proton*.*; \
             rm -f /etc/machine-id; \
